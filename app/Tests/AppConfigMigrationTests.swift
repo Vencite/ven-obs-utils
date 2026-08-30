@@ -5,6 +5,7 @@ struct AppConfigMigrationTests {
     static func main() throws {
         try testLegacyConfigIsMigratedWithBackup()
         try testCurrentConfigIsLeftUntouched()
+        try testLoadAutomaticallyMigratesLegacyConfig()
         print("AppConfigMigrationTests: PASS")
     }
 
@@ -73,6 +74,30 @@ struct AppConfigMigrationTests {
         }
         guard !FileManager.default.fileExists(atPath: backupURL.path) else {
             throw MigrationTestFailure("current config should not create a migration backup")
+        }
+    }
+
+    static func testLoadAutomaticallyMigratesLegacyConfig() throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let url = dir.appendingPathComponent("config.json")
+        let backupURL = url.appendingPathExtension("backup")
+
+        let legacyJSON = #"{"ontime_base_url":"https://auto.example.com","break_cue_regex":"^BRK_\\d+$","request_timeout_seconds":3,"server_host":"127.0.0.1","server_port":8765,"dry_run":true,"debounce_seconds":2}"#
+        try Data(legacyJSON.utf8).write(to: url)
+
+        let config = try AppConfig.load(from: url)
+        guard config.ontimeBaseURL == "https://auto.example.com" else {
+            throw MigrationTestFailure("load should preserve legacy values")
+        }
+        guard FileManager.default.fileExists(atPath: backupURL.path) else {
+            throw MigrationTestFailure("load should automatically create a migration backup")
+        }
+
+        let data = try Data(contentsOf: url)
+        guard let root = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+              (root["config_version"] as? NSNumber)?.intValue == AppConfig.currentConfigVersion else {
+            throw MigrationTestFailure("load should automatically write the current config version")
         }
     }
 }
