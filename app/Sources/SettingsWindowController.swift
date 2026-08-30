@@ -110,18 +110,18 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         form.addArrangedSubview(fieldRow(label: "Password", field: passwordField, key: .password))
         form.addArrangedSubview(fieldRow(label: "Break scene regex", field: obsBreakRegexField, key: .obsBreakSceneRegex))
 
-        form.addArrangedSubview(separator(in: form))
+        form.addArrangedSubview(separator())
         form.addArrangedSubview(sectionHeader("Ontime"))
         form.addArrangedSubview(fieldRow(label: "URL", field: ontimeURLField, key: .ontimeBaseURL))
         form.addArrangedSubview(fieldRow(label: "Break CUE regex", field: ontimeBreakRegexField, key: .ontimeBreakCueRegex))
 
-        form.addArrangedSubview(separator(in: form))
+        form.addArrangedSubview(separator())
         form.addArrangedSubview(sectionHeader("Automation"))
         form.addArrangedSubview(enterBreakCheckbox)
         form.addArrangedSubview(leaveBreakCheckbox)
         form.addArrangedSubview(dryRunCheckbox)
 
-        form.addArrangedSubview(separator(in: form))
+        form.addArrangedSubview(separator())
         form.addArrangedSubview(sectionHeader("Advanced"))
         form.addArrangedSubview(fieldRow(label: "Local service port", field: serverPortField, key: .serverPort))
         form.addArrangedSubview(fieldRow(label: "Reconnect OBS every", field: reconnectField, key: .reconnectSeconds, suffix: "seconds"))
@@ -183,10 +183,9 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         return label
     }
 
-    private func separator(in form: NSStackView) -> NSBox {
+    private func separator() -> NSBox {
         let box = NSBox()
         box.boxType = .separator
-        box.widthAnchor.constraint(equalTo: form.widthAnchor).isActive = true
         return box
     }
 
