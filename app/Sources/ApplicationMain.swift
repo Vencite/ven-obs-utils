@@ -546,6 +546,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let timestamp = ISO8601DateFormatter().string(from: Date())
         guard let data = "\(timestamp) APP \(message)\n".data(using: .utf8) else { return }
         do {
+            if !FileManager.default.fileExists(atPath: logURL.path) {
+                FileManager.default.createFile(atPath: logURL.path, contents: nil)
+            }
             let handle = try FileHandle(forWritingTo: logURL)
             try handle.seekToEnd()
             try handle.write(contentsOf: data)
@@ -597,8 +600,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         appendLog("settings open requested")
         do {
             let config = try AppConfig.load(from: configURL)
+            appendLog("settings config loaded")
             currentConfig = config
             let password = try KeychainStore.obsPassword.read() ?? ""
+            appendLog("settings keychain read ok")
             let draft = SettingsDraft(config: config, password: password)
             let controller = SettingsWindowController(
                 draft: draft,
