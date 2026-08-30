@@ -1,16 +1,22 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
+import argparse
 import json
+import logging
 import re
+import threading
+import time
 from dataclasses import dataclass
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 from urllib.parse import quote
 from urllib.request import Request, urlopen
 
 
 DEFAULT_BREAK_CUE_REGEX = r"^BRK_\d+$"
+LOG = logging.getLogger("ontime-break-sync")
 
 
 @dataclass(frozen=True)
@@ -27,8 +33,6 @@ class Config:
 def load_config(path: Path) -> Config:
     data = json.loads(path.read_text(encoding="utf-8"))
 
-    # VEN OBS Utils schema. The legacy flat schema remains supported so an
-    # existing break-sync config can be dropped in without migration first.
     if isinstance(data.get("ontime"), dict):
         ontime = data["ontime"]
         server = data.get("server") if isinstance(data.get("server"), dict) else {}
@@ -62,7 +66,11 @@ def load_config(path: Path) -> Config:
 
 
 def _get_json(url: str, timeout: float) -> Any:
-    request = Request(url, method="GET", headers={"Accept": "application/json", "User-Agent": "VEN-OBS-Utils/1.0"})
+    request = Request(
+        url,
+        method="GET",
+        headers={"Accept": "application/json", "User-Agent": "VEN-OBS-Utils/1.0"},
+    )
     with urlopen(request, timeout=timeout) as response:
         charset = response.headers.get_content_charset() or "utf-8"
         return json.loads(response.read().decode(charset))
@@ -80,11 +88,21 @@ def _cue_matches(cue: Any, regex: str) -> bool:
     return re.fullmatch(regex, cue.strip()) is not None
 
 
-def find_next_break(rundown: dict[str, Any], current_event_id: str, break_cue_regex: str) -> dict[str, Any] | None:
+def _rundown_parts(rundown: dict[str, Any]) -> tuple[list[Any], dict[str, Any]] | None:
     flat_order = rundown.get("flatOrder")
     entries = rundown.get("entries")
     if not isinstance(flat_order, list) or not isinstance(entries, dict):
         return None
+    return flat_order, entries
+
+
+def find_next_break(
+    rundown: dict[str, Any], current_event_id: str, break_cue_regex: str
+) -> dict[str, Any] | None:
+    parts = _rundown_parts(rundown)
+    if parts is None:
+        return None
+    flat_order, entries = parts
 
     try:
         current_index = flat_order.index(current_event_id)
@@ -95,24 +113,81 @@ def find_next_break(rundown: dict[str, Any], current_event_id: str, break_cue_re
         entry = entries.get(entry_id)
         if not isinstance(entry, dict):
             continue
-        if entry.get("type") != "event":
-            continue
-        if entry.get("skip") is True:
+        if entry.get("type") != "event" or entry.get("skip") is True:
             continue
         if _cue_matches(entry.get("cue"), break_cue_regex):
             return entry
     return None
 
 
-def sync_to_next_break(config: Config) -> dict[str, Any]:
+def find_next_event(rundown: dict[str, Any], current_event_id: str) -> dict[str, Any] | None:
+    parts = _rundown_parts(rundown)
+    if parts is None:
+        return None
+    flat_order, entries = parts
+
+    try:
+        current_index = flat_order.index(current_event_id)
+    except ValueError:
+        return None
+
+    for entry_id in flat_order[current_index + 1 :]:
+        entry = entries.get(entry_id)
+        if not isinstance(entry, dict):
+            continue
+        if entry.get("type") != "event" or entry.get("skip") is True:
+            continue
+        return entry
+    return None
+
+
+def _current_event(config: Config) -> tuple[dict[str, Any] | None, str | None]:
     runtime_raw = _get_json(f"{config.ontime_base_url}/api/poll", config.request_timeout_seconds)
     runtime = _unwrap_payload(runtime_raw)
     if not isinstance(runtime, dict):
-        return {"status": "ignored", "reason": "invalid_runtime"}
-
+        return None, "invalid_runtime"
     current = runtime.get("eventNow")
     if not isinstance(current, dict) or not current.get("id"):
-        return {"status": "ignored", "reason": "no_current_event"}
+        return None, "no_current_event"
+    return current, None
+
+
+def _current_rundown(config: Config) -> tuple[dict[str, Any] | None, str | None]:
+    rundown_raw = _get_json(
+        f"{config.ontime_base_url}/data/rundowns/current", config.request_timeout_seconds
+    )
+    rundown = _unwrap_payload(rundown_raw)
+    if not isinstance(rundown, dict):
+        return None, "invalid_rundown"
+    return rundown, None
+
+
+def _start_event(
+    config: Config,
+    event: dict[str, Any],
+    *,
+    extra: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    result = {
+        "cue": event.get("cue", ""),
+        "event_id": event["id"],
+        "title": event.get("title", ""),
+    }
+    if extra:
+        result.update(extra)
+
+    if config.dry_run:
+        return {"status": "dry_run", **result}
+
+    event_id = quote(str(event["id"]), safe="")
+    _get_json(f"{config.ontime_base_url}/api/start/id/{event_id}", config.request_timeout_seconds)
+    return {"status": "started", **result}
+
+
+def sync_to_next_break(config: Config) -> dict[str, Any]:
+    current, reason = _current_event(config)
+    if current is None:
+        return {"status": "ignored", "reason": reason}
 
     if _cue_matches(current.get("cue"), config.break_cue_regex):
         return {
@@ -122,37 +197,49 @@ def sync_to_next_break(config: Config) -> dict[str, Any]:
             "event_id": current["id"],
         }
 
-    rundown_raw = _get_json(f"{config.ontime_base_url}/data/rundowns/current", config.request_timeout_seconds)
-    rundown = _unwrap_payload(rundown_raw)
-    if not isinstance(rundown, dict):
-        return {"status": "ignored", "reason": "invalid_rundown"}
+    rundown, reason = _current_rundown(config)
+    if rundown is None:
+        return {"status": "ignored", "reason": reason}
 
     next_break = find_next_break(rundown, str(current["id"]), config.break_cue_regex)
     if next_break is None:
         return {"status": "ignored", "reason": "no_next_break"}
 
-    result = {
-        "cue": next_break.get("cue", ""),
-        "event_id": next_break["id"],
-        "title": next_break.get("title", ""),
-    }
-
-    if config.dry_run:
-        return {"status": "dry_run", **result}
-
-    event_id = quote(str(next_break["id"]), safe="")
-    _get_json(f"{config.ontime_base_url}/api/start/id/{event_id}", config.request_timeout_seconds)
-    return {"status": "started", **result}
+    return _start_event(config, next_break)
 
 
-import argparse
-import logging
-import threading
-import time
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+def sync_from_break(config: Config) -> dict[str, Any]:
+    current, reason = _current_event(config)
+    if current is None:
+        return {"status": "ignored", "reason": reason}
 
+    current_id = str(current["id"])
+    current_cue = current.get("cue", "")
+    if not _cue_matches(current_cue, config.break_cue_regex):
+        return {
+            "status": "ignored",
+            "reason": "not_on_break",
+            "cue": current_cue,
+            "event_id": current_id,
+        }
 
-LOG = logging.getLogger("ontime-break-sync")
+    rundown, reason = _current_rundown(config)
+    if rundown is None:
+        return {"status": "ignored", "reason": reason}
+
+    parts = _rundown_parts(rundown)
+    if parts is None or current_id not in parts[0]:
+        return {"status": "ignored", "reason": "current_event_not_in_rundown"}
+
+    next_event = find_next_event(rundown, current_id)
+    if next_event is None:
+        return {"status": "ignored", "reason": "no_next_event"}
+
+    return _start_event(
+        config,
+        next_event,
+        extra={"from_cue": current_cue, "from_event_id": current_id},
+    )
 
 
 def check_ontime(config: Config) -> dict[str, Any]:
@@ -161,9 +248,26 @@ def check_ontime(config: Config) -> dict[str, Any]:
     return {"status": "ok", "ontime_version": str(version)}
 
 
-def create_local_server(config: Config, host: str = "127.0.0.1", port: int = 8765) -> ThreadingHTTPServer:
+def get_current_ontime_event(config: Config) -> dict[str, Any] | None:
+    current, _ = _current_event(config)
+    if current is None:
+        return None
+    return {
+        "id": str(current["id"]),
+        "cue": current.get("cue", ""),
+        "title": current.get("title", ""),
+    }
+
+
+def create_local_server(
+    config: Config, host: str = "127.0.0.1", port: int = 8765
+) -> ThreadingHTTPServer:
     state_lock = threading.Lock()
-    state = {"last_trigger": float("-inf"), "last_action": None}
+    action_execution_lock = threading.Lock()
+    state: dict[str, Any] = {
+        "last_trigger": {"break": float("-inf"), "leave_break": float("-inf")},
+        "last_action": None,
+    }
 
     class Handler(BaseHTTPRequestHandler):
         def do_GET(self):
@@ -178,53 +282,79 @@ def create_local_server(config: Config, host: str = "127.0.0.1", port: int = 876
             if self.path == "/status":
                 try:
                     health = check_ontime(config)
+                    current_event = get_current_ontime_event(config)
                     with state_lock:
                         last_action = state["last_action"]
-                    self._send_json(200, {
-                        "status": "ok",
-                        "service": "running",
-                        "ontime": "connected",
-                        "ontime_version": health["ontime_version"],
-                        "mode": "dry_run" if config.dry_run else "live",
-                        "break_cue_regex": config.break_cue_regex,
-                        "last_action": last_action,
-                    })
+                    self._send_json(
+                        200,
+                        {
+                            "status": "ok",
+                            "service": "running",
+                            "ontime": "connected",
+                            "ontime_version": health["ontime_version"],
+                            "ontime_event": current_event,
+                            "mode": "dry_run" if config.dry_run else "live",
+                            "break_cue_regex": config.break_cue_regex,
+                            "last_action": last_action,
+                        },
+                    )
                 except Exception as exc:
                     LOG.error("Status check failed: %s", exc)
                     with state_lock:
                         last_action = state["last_action"]
-                    self._send_json(503, {
-                        "status": "degraded",
-                        "service": "running",
-                        "ontime": "disconnected",
-                        "mode": "dry_run" if config.dry_run else "live",
-                        "break_cue_regex": config.break_cue_regex,
-                        "last_action": last_action,
-                    })
+                    self._send_json(
+                        503,
+                        {
+                            "status": "degraded",
+                            "service": "running",
+                            "ontime": "disconnected",
+                            "ontime_event": None,
+                            "mode": "dry_run" if config.dry_run else "live",
+                            "break_cue_regex": config.break_cue_regex,
+                            "last_action": last_action,
+                        },
+                    )
                 return
 
-            if self.path not in ("/break", "/ontime/break"):
+            action_key: str
+            action_label: str
+            action: Callable[[Config], dict[str, Any]]
+            if self.path in ("/break", "/ontime/break"):
+                action_key = "break"
+                action_label = "Break"
+                action = sync_to_next_break
+            elif self.path == "/ontime/leave-break":
+                action_key = "leave_break"
+                action_label = "Leave-break"
+                action = sync_from_break
+            else:
                 self._send_json(404, {"status": "error", "reason": "not_found"})
                 return
 
             now = time.monotonic()
             with state_lock:
-                if now - state["last_trigger"] < config.debounce_seconds:
+                last_trigger = state["last_trigger"][action_key]
+                if now - last_trigger < config.debounce_seconds:
                     self._send_json(200, {"status": "ignored", "reason": "debounce"})
                     return
-                state["last_trigger"] = now
+                state["last_trigger"][action_key] = now
 
             try:
-                result = sync_to_next_break(config)
+                with action_execution_lock:
+                    result = action(config)
                 with state_lock:
-                    state["last_action"] = result
-                LOG.info("Break trigger result: %s", result)
+                    state["last_action"] = {"action": action_key, **result}
+                LOG.info("%s trigger result: %s", action_label, result)
                 self._send_json(200, result)
             except Exception as exc:
-                LOG.exception("Break trigger failed")
-                result = {"status": "error", "reason": "ontime_request_failed", "detail": str(exc)}
+                LOG.exception("%s trigger failed", action_label)
+                result = {
+                    "status": "error",
+                    "reason": "ontime_request_failed",
+                    "detail": str(exc),
+                }
                 with state_lock:
-                    state["last_action"] = result
+                    state["last_action"] = {"action": action_key, **result}
                 self._send_json(503, result)
 
         def _send_json(self, status: int, payload: dict[str, Any]):
@@ -247,7 +377,11 @@ def main() -> int:
     parser.add_argument("--config", default="config.json", help="Path to config JSON")
     args = parser.parse_args()
 
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s", datefmt="%H:%M:%S")
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s %(levelname)s %(message)s",
+        datefmt="%H:%M:%S",
+    )
 
     config_path = Path(args.config).expanduser().resolve()
     try:

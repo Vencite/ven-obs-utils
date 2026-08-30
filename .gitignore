@@ -5,3 +5,6 @@ __pycache__/
 
 # Local/private config. The public template is config/config.example.json.
 config/config.json
+
+# Agent/vibecoding working docs stay local.
+docs/superpowers/

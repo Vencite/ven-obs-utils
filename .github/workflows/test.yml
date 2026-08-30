@@ -5,11 +5,80 @@ on:
   pull_request:
 
 jobs:
-  python-tests:
+  tests:
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
       - name: Run backend tests
         run: python3 -m unittest discover -s tests -v
-      - name: Check Swift source parses
-        run: xcrun --sdk macosx swiftc -parse app/Sources/main.swift
+      - name: Run Swift scene automation tests
+        run: |
+          xcrun --sdk macosx swiftc -parse-as-library \
+            app/Sources/SceneAutomation.swift \
+            app/Sources/AppConfig.swift \
+            app/Tests/SceneAutomationTests.swift \
+            -o /tmp/scene-automation-tests
+          /tmp/scene-automation-tests
+      - name: Run Keychain storage tests
+        run: |
+          xcrun --sdk macosx swiftc -parse-as-library \
+            -framework Security \
+            app/Sources/KeychainStore.swift \
+            app/Tests/KeychainStoreTests.swift \
+            -o /tmp/keychain-store-tests
+          /tmp/keychain-store-tests
+      - name: Run OBS protocol tests
+        run: |
+          xcrun --sdk macosx swiftc -parse-as-library \
+            -framework CryptoKit \
+            app/Sources/OBSProtocol.swift \
+            app/Tests/OBSProtocolTests.swift \
+            -o /tmp/obs-protocol-tests
+          /tmp/obs-protocol-tests
+      - name: Run OBS connection state tests
+        run: |
+          xcrun --sdk macosx swiftc -parse-as-library \
+            -framework CryptoKit \
+            app/Sources/SceneAutomation.swift \
+            app/Sources/OBSProtocol.swift \
+            app/Sources/OBSConnectionState.swift \
+            app/Tests/OBSConnectionStateTests.swift \
+            -o /tmp/obs-connection-state-tests
+          /tmp/obs-connection-state-tests
+      - name: Run OBS websocket routing tests
+        run: |
+          xcrun --sdk macosx swiftc -parse-as-library \
+            -framework CryptoKit \
+            app/Sources/SceneAutomation.swift \
+            app/Sources/OBSProtocol.swift \
+            app/Sources/OBSConnectionState.swift \
+            app/Sources/OBSWebSocketClient.swift \
+            app/Tests/OBSWebSocketClientTests.swift \
+            -o /tmp/obs-websocket-client-tests
+          /tmp/obs-websocket-client-tests
+      - name: Run automation request ordering tests
+        run: |
+          xcrun --sdk macosx swiftc -parse-as-library \
+            app/Sources/SceneAutomation.swift \
+            app/Sources/AutomationRequestSequence.swift \
+            app/Tests/AutomationRequestSequenceTests.swift \
+            -o /tmp/automation-request-sequence-tests
+          /tmp/automation-request-sequence-tests
+      - name: Run settings form tests
+        run: |
+          xcrun --sdk macosx swiftc -parse-as-library \
+            app/Sources/SceneAutomation.swift \
+            app/Sources/AppConfig.swift \
+            app/Sources/SettingsDraft.swift \
+            app/Tests/SettingsDraftTests.swift \
+            -o /tmp/settings-draft-tests
+          /tmp/settings-draft-tests
+      - name: Run status presentation tests
+        run: |
+          xcrun --sdk macosx swiftc -parse-as-library \
+            app/Sources/StatusPresentation.swift \
+            app/Tests/StatusPresentationTests.swift \
+            -o /tmp/status-presentation-tests
+          /tmp/status-presentation-tests
+      - name: Build macOS app
+        run: ./build_app.sh

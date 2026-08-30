@@ -19,12 +19,16 @@ SDK_PATH="$(xcrun --sdk macosx --show-sdk-path)"
 rm -rf "$APP"
 mkdir -p "$CONTENTS/MacOS" "$CONTENTS/Resources/services"
 
+SWIFT_SOURCES=("$ROOT"/app/Sources/*.swift)
+
 xcrun --sdk macosx swiftc \
   -O \
   -sdk "$SDK_PATH" \
   -framework AppKit \
   -framework Foundation \
-  "$ROOT/app/Sources/main.swift" \
+  -framework Security \
+  -framework CryptoKit \
+  "${SWIFT_SOURCES[@]}" \
   -o "$CONTENTS/MacOS/$EXECUTABLE"
 
 cp "$ROOT/services/ontime_break_sync.py" "$CONTENTS/Resources/services/ontime_break_sync.py"
