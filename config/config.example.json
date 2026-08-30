@@ -1,4 +1,5 @@
 {
+  "config_version": 1,
   "ontime": {
     "base_url": "https://your-ontime.example.com",
     "break_cue_regex": "^BRK_\\d+$",
