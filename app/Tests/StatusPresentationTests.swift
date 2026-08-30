@@ -18,6 +18,17 @@ struct StatusPresentationTests {
         guard StatusPresentation.symbolName(for: .warning) == "exclamationmark.triangle.fill" else {
             throw StatusPresentationTestFailure("warning should use warning symbol")
         }
+        for state in [
+            StatusPresentationState.ready,
+            .warning,
+            .working,
+            .success,
+            .failure,
+        ] {
+            guard !StatusPresentation.symbolName(for: state).isEmpty else {
+                throw StatusPresentationTestFailure("every status state needs an icon")
+            }
+        }
         print("StatusPresentationTests: PASS")
     }
 }
