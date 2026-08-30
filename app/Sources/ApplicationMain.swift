@@ -14,23 +14,36 @@ final class ServiceController {
     private let serviceURL: URL
     private let configURL: URL
     private let logURL: URL
+    private let servicePort: Int
     private let onFailure: (Int32) -> Void
+    private let onStaleHelperStopped: (Int32) -> Void
 
     init(
         serviceURL: URL,
         configURL: URL,
         logURL: URL,
-        onFailure: @escaping (Int32) -> Void
+        servicePort: Int,
+        onFailure: @escaping (Int32) -> Void,
+        onStaleHelperStopped: @escaping (Int32) -> Void
     ) {
         self.serviceURL = serviceURL
         self.configURL = configURL
         self.logURL = logURL
+        self.servicePort = servicePort
         self.onFailure = onFailure
+        self.onStaleHelperStopped = onStaleHelperStopped
     }
 
     func start() {
         shouldRun = true
         guard process?.isRunning != true else { return }
+
+        if let stalePID = StaleHelperCleanup.terminateManagedHelperListening(
+            on: servicePort,
+            configURL: configURL
+        ) {
+            onStaleHelperStopped(stalePID)
+        }
 
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/bin/zsh")
@@ -146,9 +159,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             serviceURL: serviceURL,
             configURL: configURL,
             logURL: logURL,
+            servicePort: currentConfig?.serverPort ?? defaultPort,
             onFailure: { [weak self] status in
                 self?.serviceStatusItem.title = "Service: stopped (exit \(status))"
                 self?.appendLog("service stopped exit_status=\(status)")
+            },
+            onStaleHelperStopped: { [weak self] pid in
+                self?.appendLog("service stale_helper_terminated pid=\(pid)")
             }
         )
 

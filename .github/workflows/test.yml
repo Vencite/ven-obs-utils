@@ -88,6 +88,13 @@ jobs:
             app/Tests/ServiceRestartPolicyTests.swift \
             -o /tmp/service-restart-policy-tests
           /tmp/service-restart-policy-tests
+      - name: Run stale helper cleanup tests
+        run: |
+          xcrun --sdk macosx swiftc \
+            app/Sources/StaleHelperCleanup.swift \
+            app/Tests/StaleHelperCleanupTests.swift \
+            -o /tmp/stale-helper-cleanup-tests
+          /tmp/stale-helper-cleanup-tests
       - name: Run status presentation tests
         run: |
           xcrun --sdk macosx swiftc -parse-as-library \
