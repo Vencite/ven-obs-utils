@@ -52,22 +52,14 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
 
     func present() {
         clearErrors()
-        // This runs from a status-menu item action, while the menu tracking
-        // loop is still active. macOS ignores both activation and policy
-        // switches issued while the menu is tracking, so defer everything
-        // until the loop closes.
-        DispatchQueue.main.async { [weak self] in
-            guard let self else { return }
-            // macOS refuses to surface a window from a pure menu-bar
-            // (.accessory) app: without a Dock icon the panel silently never
-            // comes to the front. Switch to .regular for the panel's
-            // lifetime, then back on close.
-            NSApp.setActivationPolicy(.regular)
-            NSApp.activate(ignoringOtherApps: true)
-            self.showWindow(nil)
-            self.window?.makeKeyAndOrderFront(nil)
-            self.window?.orderFrontRegardless()
-        }
+        // This is called only after the status-menu tracking loop has ended.
+        // A menu-bar app must become a regular app before AppKit can make a
+        // utility panel key and visible.
+        NSApp.setActivationPolicy(.regular)
+        NSApp.activate(ignoringOtherApps: true)
+        showWindow(nil)
+        window?.makeKeyAndOrderFront(nil)
+        window?.orderFrontRegardless()
     }
 
     func windowWillClose(_ notification: Notification) {

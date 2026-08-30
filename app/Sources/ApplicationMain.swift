@@ -614,9 +614,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc private func showSettings() {
-        // Menu-bar apps have no dock icon; without activation a modal alert or
-        // settings window can silently fail to come to the front.
-        NSApp.activate(ignoringOtherApps: true)
         appendLog("settings open requested")
         do {
             let hadCachedConfig = currentConfig != nil
@@ -629,9 +626,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             let password = try KeychainStore.obsPassword.read() ?? ""
             appendLog("settings keychain read ok")
             let draft = SettingsDraft(config: config, password: password)
-            appendLog("settings controller creation deferred")
-            DispatchQueue.main.async { [weak self] in
+            appendLog("settings controller creation scheduled")
+            // A timer in the default run-loop mode fires only after AppKit has
+            // exited the status-menu tracking loop. Dispatching straight back
+            // to the main queue can still run while that loop owns the menu.
+            Timer.scheduledTimer(withTimeInterval: 0.1, repeats: false) { [weak self] _ in
                 guard let self else { return }
+                self.appendLog("settings controller creation started")
                 let controller = SettingsWindowController(
                     draft: draft,
                     onSave: { [weak self] draft in
