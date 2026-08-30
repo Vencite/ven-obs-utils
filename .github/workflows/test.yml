@@ -15,6 +15,7 @@ jobs:
         run: |
           xcrun --sdk macosx swiftc -parse-as-library \
             app/Sources/SceneAutomation.swift \
+            app/Sources/AppConfig.swift \
             app/Tests/SceneAutomationTests.swift \
             -o /tmp/scene-automation-tests
           /tmp/scene-automation-tests
