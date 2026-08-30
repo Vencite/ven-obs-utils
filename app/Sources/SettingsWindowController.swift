@@ -102,7 +102,9 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         documentView.addSubview(form)
         onDiagnostic("settings panel form created")
 
+        onDiagnostic("settings panel obs header adding")
         form.addArrangedSubview(sectionHeader("OBS"))
+        onDiagnostic("settings panel obs header added")
         form.addArrangedSubview(fieldRow(label: "Host", field: obsHostField, key: .obsHost))
         form.addArrangedSubview(fieldRow(label: "Port", field: obsPortField, key: .obsPort))
         form.addArrangedSubview(fieldRow(label: "Password", field: passwordField, key: .password))
@@ -194,6 +196,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         key: SettingsDraftField,
         suffix: String? = nil
     ) -> NSView {
+        onDiagnostic("settings panel field_row \(label) started")
         let container = NSStackView()
         container.orientation = .vertical
         container.alignment = .leading
@@ -209,6 +212,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         labelView.widthAnchor.constraint(equalToConstant: 150).isActive = true
 
         field.widthAnchor.constraint(equalToConstant: suffix == nil ? 350 : 270).isActive = true
+        onDiagnostic("settings panel field_row \(label) field constraints activated")
         row.addArrangedSubview(labelView)
         row.addArrangedSubview(field)
 
@@ -235,6 +239,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
 
         container.addArrangedSubview(row)
         container.addArrangedSubview(errorIndent)
+        onDiagnostic("settings panel field_row \(label) completed")
         return container
     }
 
