@@ -1,6 +1,6 @@
 import Foundation
 
-enum SettingsDraftField: String, Equatable {
+enum SettingsDraftField: String, Hashable {
     case obsHost
     case obsPort
     case password
@@ -40,7 +40,7 @@ struct SettingsDraft {
         ontimeBaseURL = config.ontimeBaseURL
         ontimeBreakCueRegex = config.ontimeBreakCueRegex
         serverPort = String(config.serverPort)
-        reconnectSeconds = format(config.obsReconnectSeconds)
+        reconnectSeconds = Self.format(config.obsReconnectSeconds)
         enterBreakEnabled = config.enterBreakEnabled
         leaveBreakEnabled = config.leaveBreakEnabled
         dryRun = config.dryRun
