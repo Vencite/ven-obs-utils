@@ -1,0 +1,15 @@
+name: Tests
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  python-tests:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run backend tests
+        run: python3 -m unittest discover -s tests -v
+      - name: Check Swift source parses
+        run: xcrun --sdk macosx swiftc -parse app/Sources/main.swift
