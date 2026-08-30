@@ -65,57 +65,62 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
     private func buildUI() {
         guard let contentView = window?.contentView else { return }
 
-        let root = NSStackView()
-        root.orientation = .vertical
-        root.alignment = .leading
-        root.spacing = 12
-        root.translatesAutoresizingMaskIntoConstraints = false
-        contentView.addSubview(root)
+        let scrollView = NSScrollView()
+        scrollView.translatesAutoresizingMaskIntoConstraints = false
+        scrollView.hasVerticalScroller = true
+        scrollView.autohidesScrollers = true
+        scrollView.drawsBackground = false
+        contentView.addSubview(scrollView)
 
-        NSLayoutConstraint.activate([
-            root.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 24),
-            root.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -24),
-            root.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 22),
-            root.bottomAnchor.constraint(lessThanOrEqualTo: contentView.bottomAnchor, constant: -20),
-        ])
+        let documentView = NSView()
+        documentView.translatesAutoresizingMaskIntoConstraints = false
+        scrollView.documentView = documentView
 
-        root.addArrangedSubview(sectionHeader("OBS"))
-        root.addArrangedSubview(fieldRow(label: "Host", field: obsHostField, key: .obsHost))
-        root.addArrangedSubview(fieldRow(label: "Port", field: obsPortField, key: .obsPort))
-        root.addArrangedSubview(fieldRow(label: "Password", field: passwordField, key: .password))
-        root.addArrangedSubview(fieldRow(label: "Break scene regex", field: obsBreakRegexField, key: .obsBreakSceneRegex))
+        let form = NSStackView()
+        form.orientation = .vertical
+        form.alignment = .leading
+        form.spacing = 12
+        form.translatesAutoresizingMaskIntoConstraints = false
+        documentView.addSubview(form)
 
-        root.addArrangedSubview(separator())
-        root.addArrangedSubview(sectionHeader("Ontime"))
-        root.addArrangedSubview(fieldRow(label: "URL", field: ontimeURLField, key: .ontimeBaseURL))
-        root.addArrangedSubview(fieldRow(label: "Break CUE regex", field: ontimeBreakRegexField, key: .ontimeBreakCueRegex))
+        form.addArrangedSubview(sectionHeader("OBS"))
+        form.addArrangedSubview(fieldRow(label: "Host", field: obsHostField, key: .obsHost))
+        form.addArrangedSubview(fieldRow(label: "Port", field: obsPortField, key: .obsPort))
+        form.addArrangedSubview(fieldRow(label: "Password", field: passwordField, key: .password))
+        form.addArrangedSubview(fieldRow(label: "Break scene regex", field: obsBreakRegexField, key: .obsBreakSceneRegex))
 
-        root.addArrangedSubview(separator())
-        root.addArrangedSubview(sectionHeader("Automation"))
-        root.addArrangedSubview(enterBreakCheckbox)
-        root.addArrangedSubview(leaveBreakCheckbox)
-        root.addArrangedSubview(dryRunCheckbox)
+        form.addArrangedSubview(separator(in: form))
+        form.addArrangedSubview(sectionHeader("Ontime"))
+        form.addArrangedSubview(fieldRow(label: "URL", field: ontimeURLField, key: .ontimeBaseURL))
+        form.addArrangedSubview(fieldRow(label: "Break CUE regex", field: ontimeBreakRegexField, key: .ontimeBreakCueRegex))
 
-        root.addArrangedSubview(separator())
-        root.addArrangedSubview(sectionHeader("Advanced"))
-        root.addArrangedSubview(fieldRow(label: "Local service port", field: serverPortField, key: .serverPort))
-        root.addArrangedSubview(fieldRow(label: "Reconnect OBS every", field: reconnectField, key: .reconnectSeconds, suffix: "seconds"))
+        form.addArrangedSubview(separator(in: form))
+        form.addArrangedSubview(sectionHeader("Automation"))
+        form.addArrangedSubview(enterBreakCheckbox)
+        form.addArrangedSubview(leaveBreakCheckbox)
+        form.addArrangedSubview(dryRunCheckbox)
+
+        form.addArrangedSubview(separator(in: form))
+        form.addArrangedSubview(sectionHeader("Advanced"))
+        form.addArrangedSubview(fieldRow(label: "Local service port", field: serverPortField, key: .serverPort))
+        form.addArrangedSubview(fieldRow(label: "Reconnect OBS every", field: reconnectField, key: .reconnectSeconds, suffix: "seconds"))
 
         let openConfigButton = NSButton(title: "Open config file", target: self, action: #selector(openConfig))
         openConfigButton.bezelStyle = .rounded
-        root.addArrangedSubview(openConfigButton)
+        form.addArrangedSubview(openConfigButton)
 
         generalErrorLabel.textColor = .systemRed
         generalErrorLabel.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
         generalErrorLabel.maximumNumberOfLines = 2
         generalErrorLabel.lineBreakMode = .byWordWrapping
         generalErrorLabel.isHidden = true
-        root.addArrangedSubview(generalErrorLabel)
+        form.addArrangedSubview(generalErrorLabel)
 
         let buttons = NSStackView()
         buttons.orientation = .horizontal
         buttons.spacing = 8
         buttons.alignment = .centerY
+        buttons.translatesAutoresizingMaskIntoConstraints = false
 
         let spacer = NSView()
         spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
@@ -128,8 +133,24 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         buttons.addArrangedSubview(spacer)
         buttons.addArrangedSubview(cancel)
         buttons.addArrangedSubview(save)
-        buttons.widthAnchor.constraint(equalTo: root.widthAnchor).isActive = true
-        root.addArrangedSubview(buttons)
+        contentView.addSubview(buttons)
+
+        NSLayoutConstraint.activate([
+            scrollView.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 8),
+            scrollView.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -8),
+            scrollView.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 8),
+            scrollView.bottomAnchor.constraint(equalTo: buttons.topAnchor, constant: -12),
+            buttons.leadingAnchor.constraint(equalTo: contentView.leadingAnchor),
+            buttons.trailingAnchor.constraint(equalTo: contentView.trailingAnchor),
+            buttons.bottomAnchor.constraint(equalTo: contentView.bottomAnchor, constant: -8),
+            documentView.leadingAnchor.constraint(equalTo: scrollView.contentView.leadingAnchor),
+            documentView.topAnchor.constraint(equalTo: scrollView.contentView.topAnchor),
+            documentView.widthAnchor.constraint(equalTo: scrollView.contentView.widthAnchor),
+            form.leadingAnchor.constraint(equalTo: documentView.leadingAnchor, constant: 16),
+            form.trailingAnchor.constraint(equalTo: documentView.trailingAnchor, constant: -16),
+            form.topAnchor.constraint(equalTo: documentView.topAnchor, constant: 16),
+            form.bottomAnchor.constraint(equalTo: documentView.bottomAnchor, constant: -16),
+        ])
     }
 
     private func sectionHeader(_ title: String) -> NSTextField {
@@ -138,10 +159,10 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         return label
     }
 
-    private func separator() -> NSBox {
+    private func separator(in form: NSStackView) -> NSBox {
         let box = NSBox()
         box.boxType = .separator
-        box.widthAnchor.constraint(equalToConstant: 542).isActive = true
+        box.widthAnchor.constraint(equalTo: form.widthAnchor).isActive = true
         return box
     }
 
