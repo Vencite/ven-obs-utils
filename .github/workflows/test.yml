@@ -5,11 +5,18 @@ on:
   pull_request:
 
 jobs:
-  python-tests:
+  tests:
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
       - name: Run backend tests
         run: python3 -m unittest discover -s tests -v
-      - name: Check Swift source parses
-        run: xcrun --sdk macosx swiftc -parse app/Sources/main.swift
+      - name: Run Swift scene automation tests
+        run: |
+          xcrun --sdk macosx swiftc -parse-as-library \
+            app/Sources/SceneAutomation.swift \
+            app/Tests/SceneAutomationTests.swift \
+            -o /tmp/scene-automation-tests
+          /tmp/scene-automation-tests
+      - name: Build macOS app
+        run: ./build_app.sh
