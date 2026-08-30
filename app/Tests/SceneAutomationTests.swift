@@ -32,8 +32,45 @@ struct SceneAutomationTests {
             // expected
         }
 
+        try testProgramSceneTracker(pattern: pattern)
         try testConfigMigrationDefaults()
         print("SceneAutomationTests: PASS")
+    }
+
+    static func testProgramSceneTracker(pattern: String) throws {
+        var tracker = OBSProgramSceneTracker()
+
+        guard try tracker.receive(scene: "KAMERY_LIVE", pattern: pattern) == nil else {
+            throw TestFailure("first Program scene must establish baseline without action")
+        }
+        guard tracker.currentScene == "KAMERY_LIVE" else {
+            throw TestFailure("baseline scene should be stored")
+        }
+
+        let enter = try tracker.receive(scene: "PRZERWA_RANDOM", pattern: pattern)
+        guard enter?.previous == "KAMERY_LIVE",
+              enter?.current == "PRZERWA_RANDOM",
+              enter?.action == .enterBreak else {
+            throw TestFailure("Program scene transition should classify enter break")
+        }
+
+        guard try tracker.receive(scene: "PRZERWA_RANDOM", pattern: pattern) == nil else {
+            throw TestFailure("duplicate Program scene event must be ignored")
+        }
+
+        tracker.resetForReconnect()
+        guard tracker.currentScene == nil else {
+            throw TestFailure("disconnect should clear Program scene baseline")
+        }
+        guard try tracker.receive(scene: "KAMERY_LIVE_DWA", pattern: pattern) == nil else {
+            throw TestFailure("reconnect baseline must not replay missed transition")
+        }
+
+        let next = try tracker.receive(scene: "PRZERWA_MANGO", pattern: pattern)
+        guard next?.previous == "KAMERY_LIVE_DWA",
+              next?.action == .enterBreak else {
+            throw TestFailure("next real Program event after reconnect should trigger normally")
+        }
     }
 
     static func testConfigMigrationDefaults() throws {
