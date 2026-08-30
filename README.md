@@ -132,7 +132,15 @@ User configuration lives outside the application bundle:
 ~/Library/Application Support/VEN OBS Utils/config.json
 ```
 
-Replacing or updating `/Applications/VEN OBS Utils.app` does **not** overwrite that file or the Keychain password. New config fields are loaded with defaults when upgrading from an older config.
+Replacing or updating `/Applications/VEN OBS Utils.app` does **not** overwrite that file or the Keychain password.
+
+Configs are versioned with `config_version`. When an older config is loaded, VEN OBS Utils automatically migrates it before the helper starts. The exact pre-migration file is copied to:
+
+```text
+~/Library/Application Support/VEN OBS Utils/config.json.backup
+```
+
+The migrated config is then written atomically. Existing user values and unknown keys are preserved, old flat keys are moved into the current schema, and missing newer fields receive defaults. A config that is already current is not rewritten and does not create a migration backup.
 
 ## Requirements
 
@@ -197,6 +205,7 @@ Example:
 
 ```json
 {
+  "config_version": 1,
   "ontime": {
     "base_url": "https://your-ontime.example.com",
     "break_cue_regex": "^BRK_\\d+$",
@@ -283,7 +292,7 @@ Backend tests:
 python3 -m unittest discover -s tests -v
 ```
 
-GitHub Actions also runs the Swift state, protocol, configuration, Keychain and routing tests and builds the complete macOS application.
+GitHub Actions also runs the Swift state, protocol, configuration, migration, Keychain and routing tests and builds the complete macOS application.
 
 The Python tests run against a local fake Ontime server and do not require access to a real Ontime instance.
 
@@ -291,16 +300,17 @@ The Python tests run against a local fake Ontime server and do not require acces
 
 Releases are built automatically by GitHub Actions.
 
-Pushing a tag matching `v*`, for example:
+The simplest release path is to update:
 
-```bash
-git tag v0.2.0
-git push origin v0.2.0
+```text
+.github/RELEASE_VERSION
 ```
 
-runs the tests, builds the macOS app, packages it as both `.dmg` and `.zip`, and publishes both files to a GitHub Release.
+to a new semver such as `v0.2.1` and push it to `main`. The release workflow runs tests, builds the macOS app, packages `.dmg` and `.zip`, creates the matching Git tag if needed, and publishes the GitHub Release.
 
-The tag is used as the app version. There is currently no Developer ID signing or Apple notarization step.
+Pushing a normal `v*` tag is also supported.
+
+There is currently no Developer ID signing or Apple notarization step.
 
 ## Vibe-coding disclaimer
 
