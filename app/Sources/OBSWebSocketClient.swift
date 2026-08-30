@@ -203,7 +203,7 @@ final class OBSWebSocketClient {
                 receiveTask = nil
                 socket?.cancel(with: .policyViolation, reason: nil)
                 socket = nil
-                generation += 1
+                self.generation += 1
                 return
             }
         }
