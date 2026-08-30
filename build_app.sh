@@ -5,7 +5,7 @@ ROOT="$(cd "$(dirname "$0")" && pwd)"
 APP_NAME="VEN OBS Utils"
 EXECUTABLE="VENOBSUtils"
 BUNDLE_ID="works.ven.obs-utils"
-VERSION="0.1.0"
+VERSION="${VERSION:-0.1.0}"
 BUILD_DIR="$ROOT/build"
 APP="$BUILD_DIR/$APP_NAME.app"
 CONTENTS="$APP/Contents"
@@ -51,8 +51,10 @@ cat > "$CONTENTS/Info.plist" <<EOF
 </plist>
 EOF
 
-# Ad-hoc signing avoids a broken-signature warning after assembling the bundle.
+# Ad-hoc signing keeps the assembled bundle internally consistent.
+# Public releases are intentionally not Developer ID signed or notarized.
 codesign --force --deep --sign - "$APP" >/dev/null
 
 echo "Built: $APP"
+echo "Version: $VERSION"
 echo "Run:   open '$APP'"
