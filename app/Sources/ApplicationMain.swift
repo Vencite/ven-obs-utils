@@ -78,6 +78,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let obsClient = OBSWebSocketClient()
     private var settingsController: SettingsWindowController?
     private var currentConfig: AppConfig?
+    private var automationRequests = AutomationRequestSequence()
 
     private var obsConnected = false
     private var ontimeConnected = false
@@ -275,8 +276,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func triggerOntime(path: String, transition: ProgramSceneTransition) {
+        let request = AutomationRequest(path: path, transition: transition)
+        if let next = automationRequests.enqueue(request) {
+            startAutomationRequest(next)
+        } else {
+            appendLog(
+                "automation queued from_scene=\(transition.previous) to_scene=\(transition.current) action=\(transition.action.rawValue)"
+            )
+        }
+    }
+
+    private func startAutomationRequest(_ queued: AutomationRequest) {
         guard let config = currentConfig,
-              let url = URL(string: "http://127.0.0.1:\(config.serverPort)\(path)") else {
+              let url = URL(string: "http://127.0.0.1:\(config.serverPort)\(queued.path)") else {
+            lastActionItem.title = "Last action: invalid local helper URL"
+            appendLog("automation result=error reason=invalid_local_helper_url")
+            flashIcon(state: .failure, duration: 2.0)
+            finishAutomationRequest()
             return
         }
 
@@ -292,10 +308,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     data: data,
                     response: response,
                     error: error,
-                    transition: transition
+                    transition: queued.transition
                 )
+                self.finishAutomationRequest()
             }
         }.resume()
+    }
+
+    private func finishAutomationRequest() {
+        guard let next = automationRequests.finishCurrent() else { return }
+        startAutomationRequest(next)
     }
 
     private func handleAutomationResponse(
