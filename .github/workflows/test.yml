@@ -45,5 +45,13 @@ jobs:
             app/Tests/OBSConnectionStateTests.swift \
             -o /tmp/obs-connection-state-tests
           /tmp/obs-connection-state-tests
+      - name: Run OBS websocket routing tests
+        run: |
+          xcrun --sdk macosx swiftc -parse-as-library \
+            app/Sources/SceneAutomation.swift \
+            app/Sources/OBSWebSocketClient.swift \
+            app/Tests/OBSWebSocketClientTests.swift \
+            -o /tmp/obs-websocket-client-tests
+          /tmp/obs-websocket-client-tests
       - name: Build macOS app
         run: ./build_app.sh
