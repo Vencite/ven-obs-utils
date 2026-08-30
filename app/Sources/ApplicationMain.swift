@@ -472,12 +472,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func setIcon(state: StatusPresentationState, tooltip: String) {
         guard let button = statusItem?.button else { return }
-        // Force dark menu-bar appearance so the template icon always renders
-        // white, regardless of the user's system light/dark mode.
-        button.appearance = NSAppearance(named: .darkAqua)
         let symbol = StatusPresentation.symbolName(for: state)
-        if let image = NSImage(systemSymbolName: symbol, accessibilityDescription: appName) {
-            image.isTemplate = true
+        let colour: NSColor
+        switch state {
+        case .ready: colour = .white
+        case .warning: colour = .systemOrange
+        case .working: colour = .systemBlue
+        case .success: colour = .systemGreen
+        case .failure: colour = .systemRed
+        }
+
+        // Do not use a template image here: macOS renders templates black on a
+        // light menu bar and ignores contentTintColor for some status items.
+        let configuration = NSImage.SymbolConfiguration(pointSize: 14, weight: .medium)
+            .applying(NSImage.SymbolConfiguration(hierarchicalColor: colour))
+        if let image = NSImage(systemSymbolName: symbol, accessibilityDescription: appName)?
+            .withSymbolConfiguration(configuration) {
+            image.isTemplate = false
             button.image = image
             button.imagePosition = .imageOnly
             button.title = ""
@@ -485,21 +496,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             button.image = nil
             button.title = "●"
         }
-
-        switch state {
-        case .ready:
-            // Explicit white tint: guarantees the template icon renders white
-            // even if the forced dark appearance is ignored by the status item.
-            button.contentTintColor = .white
-        case .warning:
-            button.contentTintColor = .systemOrange
-        case .working:
-            button.contentTintColor = .systemBlue
-        case .success:
-            button.contentTintColor = .systemGreen
-        case .failure:
-            button.contentTintColor = .systemRed
-        }
+        button.contentTintColor = nil
         button.toolTip = tooltip
     }
 

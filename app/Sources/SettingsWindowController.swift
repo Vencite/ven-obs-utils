@@ -27,14 +27,18 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         self.onSave = onSave
         self.onOpenConfig = onOpenConfig
 
-        let window = NSWindow(
+        let window = NSPanel(
             contentRect: NSRect(x: 0, y: 0, width: 590, height: 650),
-            styleMask: [.titled, .closable],
+            styleMask: [.titled, .closable, .utilityWindow],
             backing: .buffered,
             defer: false
         )
         window.title = "VEN OBS Utils - Settings"
         window.isReleasedWhenClosed = false
+        window.isFloatingPanel = true
+        window.hidesOnDeactivate = false
+        window.level = .floating
+        window.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
         window.center()
         super.init(window: window)
         window.delegate = self
