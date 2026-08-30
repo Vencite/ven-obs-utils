@@ -52,11 +52,11 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
 
     func present() {
         clearErrors()
-        // Menu-bar (LSUIElement) apps: plain activation only brings the main
-        // and key windows forward, which can silently skip a utility panel.
-        // Force full activation and surface every window.
+        // macOS refuses to surface a window from a pure menu-bar (.accessory)
+        // app: without a Dock icon the panel silently never comes to the front.
+        // Switch to .regular for the panel's lifetime, then back on close.
+        NSApp.setActivationPolicy(.regular)
         NSApp.activate(ignoringOtherApps: true)
-        NSRunningApplication.current.activate(options: [.activateAllWindows])
         // This runs from a status-menu item action, while the menu tracking
         // loop is still active. Ordering a freshly created panel synchronously
         // there can be swallowed; defer until the loop closes.
@@ -65,6 +65,11 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
             self?.window?.makeKeyAndOrderFront(nil)
             self?.window?.orderFrontRegardless()
         }
+    }
+
+    func windowWillClose(_ notification: Notification) {
+        // Restore menu-bar app state when the panel closes.
+        NSApp.setActivationPolicy(.accessory)
     }
 
     private func buildUI() {
