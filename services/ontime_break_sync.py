@@ -263,6 +263,7 @@ def create_local_server(
     config: Config, host: str = "127.0.0.1", port: int = 8765
 ) -> ThreadingHTTPServer:
     state_lock = threading.Lock()
+    action_execution_lock = threading.Lock()
     state: dict[str, Any] = {
         "last_trigger": {"break": float("-inf"), "leave_break": float("-inf")},
         "last_action": None,
@@ -339,7 +340,8 @@ def create_local_server(
                 state["last_trigger"][action_key] = now
 
             try:
-                result = action(config)
+                with action_execution_lock:
+                    result = action(config)
                 with state_lock:
                     state["last_action"] = {"action": action_key, **result}
                 LOG.info("%s trigger result: %s", action_label, result)
