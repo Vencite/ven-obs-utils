@@ -27,5 +27,13 @@ jobs:
             app/Tests/KeychainStoreTests.swift \
             -o /tmp/keychain-store-tests
           /tmp/keychain-store-tests
+      - name: Run OBS protocol tests
+        run: |
+          xcrun --sdk macosx swiftc -parse-as-library \
+            -framework CryptoKit \
+            app/Sources/OBSProtocol.swift \
+            app/Tests/OBSProtocolTests.swift \
+            -o /tmp/obs-protocol-tests
+          /tmp/obs-protocol-tests
       - name: Build macOS app
         run: ./build_app.sh
