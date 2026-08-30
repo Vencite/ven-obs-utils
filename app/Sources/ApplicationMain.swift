@@ -14,11 +14,18 @@ final class ServiceController {
     private let serviceURL: URL
     private let configURL: URL
     private let logURL: URL
+    private let onFailure: (Int32) -> Void
 
-    init(serviceURL: URL, configURL: URL, logURL: URL) {
+    init(
+        serviceURL: URL,
+        configURL: URL,
+        logURL: URL,
+        onFailure: @escaping (Int32) -> Void
+    ) {
         self.serviceURL = serviceURL
         self.configURL = configURL
         self.logURL = logURL
+        self.onFailure = onFailure
     }
 
     func start() {
@@ -29,14 +36,19 @@ final class ServiceController {
         process.executableURL = URL(fileURLWithPath: "/bin/zsh")
         let command = "exec python3 \(shellQuote(serviceURL.path)) --config \(shellQuote(configURL.path)) >> \(shellQuote(logURL.path)) 2>&1"
         process.arguments = ["-lc", command]
-        process.terminationHandler = { [weak self] _ in
+        process.terminationHandler = { [weak self] process in
             guard let self else { return }
             DispatchQueue.main.async {
                 self.process = nil
-                if self.shouldRun {
+                if ServiceRestartPolicy.shouldRestart(
+                    shouldRun: self.shouldRun,
+                    terminationStatus: process.terminationStatus
+                ) {
                     DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
                         self.start()
                     }
+                } else if self.shouldRun {
+                    self.onFailure(process.terminationStatus)
                 }
             }
         }
@@ -130,7 +142,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return
         }
 
-        service = ServiceController(serviceURL: serviceURL, configURL: configURL, logURL: logURL)
+        service = ServiceController(
+            serviceURL: serviceURL,
+            configURL: configURL,
+            logURL: logURL,
+            onFailure: { [weak self] status in
+                self?.serviceStatusItem.title = "Service: stopped (exit \(status))"
+                self?.appendLog("service stopped exit_status=\(status)")
+            }
+        )
 
         do {
             _ = try currentConfig?.validated()
@@ -609,20 +629,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             let password = try KeychainStore.obsPassword.read() ?? ""
             appendLog("settings keychain read ok")
             let draft = SettingsDraft(config: config, password: password)
-            let controller = SettingsWindowController(
-                draft: draft,
-                onSave: { [weak self] draft in
-                    guard let self else { return }
-                    try self.saveSettings(draft)
-                },
-                onOpenConfig: { [weak self] in
-                    guard let self else { return }
-                    NSWorkspace.shared.open(self.configURL)
-                }
-            )
-            settingsController = controller
-            appendLog("settings controller created policy=\(NSApp.activationPolicy().rawValue)")
-            controller.present()
+            appendLog("settings controller creation deferred")
+            DispatchQueue.main.async { [weak self] in
+                guard let self else { return }
+                let controller = SettingsWindowController(
+                    draft: draft,
+                    onSave: { [weak self] draft in
+                        guard let self else { return }
+                        try self.saveSettings(draft)
+                    },
+                    onOpenConfig: { [weak self] in
+                        guard let self else { return }
+                        NSWorkspace.shared.open(self.configURL)
+                    }
+                )
+                self.settingsController = controller
+                self.appendLog("settings controller created policy=\(NSApp.activationPolicy().rawValue)")
+                controller.present()
+            }
         } catch {
             appendLog("settings open_error=\(error.localizedDescription)")
             let alert = NSAlert()
