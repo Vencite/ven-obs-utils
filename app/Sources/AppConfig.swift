@@ -19,10 +19,37 @@ struct AppConfig {
 
     private var rawRoot: [String: Any]
 
+    static let currentConfigVersion = 1
     static let defaultOBSHost = "127.0.0.1"
     static let defaultOBSPort = 4455
     static let defaultOBSBreakSceneRegex = #"^PRZERWA_.*$"#
     static let defaultOBSReconnectSeconds = 5.0
+
+    static func migrateIfNeeded(at url: URL) throws -> Bool {
+        let originalData = try Data(contentsOf: url)
+        guard let root = try JSONSerialization.jsonObject(with: originalData) as? [String: Any] else {
+            throw ConfigValidationError.invalid("Config root must be a JSON object")
+        }
+
+        let version = int(root["config_version"], default: 0)
+        if version > currentConfigVersion {
+            throw ConfigValidationError.invalid(
+                "Config version \(version) is newer than this app supports (\(currentConfigVersion))"
+            )
+        }
+        guard version < currentConfigVersion else { return false }
+
+        let config = try load(from: url)
+        let backupURL = url.appendingPathExtension("backup")
+        let fileManager = FileManager.default
+
+        if fileManager.fileExists(atPath: backupURL.path) {
+            try fileManager.removeItem(at: backupURL)
+        }
+        try originalData.write(to: backupURL, options: .atomic)
+        try config.writeAtomically(to: url)
+        return true
+    }
 
     static func load(from url: URL) throws -> AppConfig {
         let data = try Data(contentsOf: url)
@@ -119,6 +146,8 @@ struct AppConfig {
         _ = try validated()
 
         var root = rawRoot
+        root["config_version"] = Self.currentConfigVersion
+
         var ontime = root["ontime"] as? [String: Any] ?? [:]
         ontime["base_url"] = ontimeBaseURL.trimmingCharacters(in: .whitespacesAndNewlines).trimmingCharacters(in: CharacterSet(charactersIn: "/"))
         ontime["break_cue_regex"] = ontimeBreakCueRegex
