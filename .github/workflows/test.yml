@@ -19,6 +19,14 @@ jobs:
             app/Tests/SceneAutomationTests.swift \
             -o /tmp/scene-automation-tests
           /tmp/scene-automation-tests
+      - name: Run config migration tests
+        run: |
+          xcrun --sdk macosx swiftc -parse-as-library \
+            app/Sources/SceneAutomation.swift \
+            app/Sources/AppConfig.swift \
+            app/Tests/AppConfigMigrationTests.swift \
+            -o /tmp/app-config-migration-tests
+          /tmp/app-config-migration-tests
       - name: Run Keychain storage tests
         run: |
           xcrun --sdk macosx swiftc -parse-as-library \
