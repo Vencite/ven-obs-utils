@@ -1,0 +1,15 @@
+{
+  "ontime": {
+    "base_url": "https://your-ontime.example.com",
+    "break_cue_regex": "^BRK_\\d+$",
+    "request_timeout_seconds": 3
+  },
+  "server": {
+    "host": "127.0.0.1",
+    "port": 8765
+  },
+  "safety": {
+    "dry_run": true,
+    "debounce_seconds": 2
+  }
+}
