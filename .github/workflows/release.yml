@@ -1,0 +1,72 @@
+name: Release DMG
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: macos-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Run backend tests
+        run: python3 -m unittest discover -s tests -v
+
+      - name: Build app
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          VERSION="${RELEASE_TAG#v}" ./build_app.sh
+
+      - name: Package ZIP and DMG
+        run: |
+          set -euo pipefail
+
+          TAG="$GITHUB_REF_NAME"
+          APP="build/VEN OBS Utils.app"
+          DIST="build/dist"
+          DMG_ROOT="$DIST/dmg-root"
+
+          rm -rf "$DIST"
+          mkdir -p "$DMG_ROOT"
+
+          ditto "$APP" "$DMG_ROOT/VEN OBS Utils.app"
+          ln -s /Applications "$DMG_ROOT/Applications"
+
+          ditto -c -k --sequesterRsrc --keepParent \
+            "$APP" \
+            "$DIST/VEN-OBS-Utils-${TAG}.zip"
+
+          hdiutil create \
+            -volname "VEN OBS Utils" \
+            -srcfolder "$DMG_ROOT" \
+            -ov \
+            -format UDZO \
+            "$DIST/VEN-OBS-Utils-${TAG}.dmg"
+
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+
+          TAG="$GITHUB_REF_NAME"
+          DMG="build/dist/VEN-OBS-Utils-${TAG}.dmg"
+          ZIP="build/dist/VEN-OBS-Utils-${TAG}.zip"
+
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" "$DMG" "$ZIP" --clobber
+          else
+            gh release create "$TAG" \
+              "$DMG" \
+              "$ZIP" \
+              --generate-notes \
+              --title "VEN OBS Utils ${TAG}"
+          fi
