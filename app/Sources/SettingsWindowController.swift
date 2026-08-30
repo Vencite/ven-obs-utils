@@ -52,18 +52,21 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
 
     func present() {
         clearErrors()
-        // macOS refuses to surface a window from a pure menu-bar (.accessory)
-        // app: without a Dock icon the panel silently never comes to the front.
-        // Switch to .regular for the panel's lifetime, then back on close.
-        NSApp.setActivationPolicy(.regular)
-        NSApp.activate(ignoringOtherApps: true)
         // This runs from a status-menu item action, while the menu tracking
-        // loop is still active. Ordering a freshly created panel synchronously
-        // there can be swallowed; defer until the loop closes.
+        // loop is still active. macOS ignores both activation and policy
+        // switches issued while the menu is tracking, so defer everything
+        // until the loop closes.
         DispatchQueue.main.async { [weak self] in
-            self?.showWindow(nil)
-            self?.window?.makeKeyAndOrderFront(nil)
-            self?.window?.orderFrontRegardless()
+            guard let self else { return }
+            // macOS refuses to surface a window from a pure menu-bar
+            // (.accessory) app: without a Dock icon the panel silently never
+            // comes to the front. Switch to .regular for the panel's
+            // lifetime, then back on close.
+            NSApp.setActivationPolicy(.regular)
+            NSApp.activate(ignoringOtherApps: true)
+            self.showWindow(nil)
+            self.window?.makeKeyAndOrderFront(nil)
+            self.window?.orderFrontRegardless()
         }
     }
 

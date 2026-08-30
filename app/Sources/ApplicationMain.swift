@@ -610,6 +610,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 }
             )
             settingsController = controller
+            appendLog("settings controller created policy=\(NSApp.activationPolicy().rawValue)")
             controller.present()
         } catch {
             appendLog("settings open_error=\(error.localizedDescription)")
