@@ -51,6 +51,11 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         NSApp.activate(ignoringOtherApps: true)
         showWindow(nil)
         window?.makeKeyAndOrderFront(nil)
+        // Menu-bar apps (.accessory) have no dock and often no active focus.
+        // orderFrontRegardless forces the window above the current key window
+        // even when the app is not active — without it Settings can silently
+        // fail to appear when the app never received activation.
+        window?.orderFrontRegardless()
     }
 
     private func buildUI() {

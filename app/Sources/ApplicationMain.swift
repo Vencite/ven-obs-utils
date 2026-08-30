@@ -471,6 +471,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func setIcon(state: StatusPresentationState, tooltip: String) {
         guard let button = statusItem?.button else { return }
+        // Force dark menu-bar appearance so the template icon always renders
+        // white, regardless of the user's system light/dark mode.
+        button.appearance = NSAppearance(named: .darkAqua)
         let symbol = StatusPresentation.symbolName(for: state)
         if let image = NSImage(systemSymbolName: symbol, accessibilityDescription: appName) {
             image.isTemplate = true
