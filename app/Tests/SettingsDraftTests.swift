@@ -3,10 +3,23 @@ import Foundation
 @main
 struct SettingsDraftTests {
     static func main() throws {
+        try testSettingsUseTheConfigurationAlreadyLoadedAtStartup()
         try testValidDraftUpdatesConfig()
         try testInvalidOBSPortIsFieldError()
         try testInvalidSceneRegexIsFieldError()
         print("SettingsDraftTests: PASS")
+    }
+
+    static func testSettingsUseTheConfigurationAlreadyLoadedAtStartup() throws {
+        let cachedConfig = try baseConfig()
+        let resolved = try SettingsConfigurationSource.resolve(current: cachedConfig) {
+            throw SettingsDraftTestFailure("Settings should not reload config when it is already cached")
+        }
+
+        guard resolved.obsHost == cachedConfig.obsHost,
+              resolved.ontimeBaseURL == cachedConfig.ontimeBaseURL else {
+            throw SettingsDraftTestFailure("Settings did not use the cached configuration")
+        }
     }
 
     static func baseConfig() throws -> AppConfig {

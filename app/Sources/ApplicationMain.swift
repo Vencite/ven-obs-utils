@@ -599,8 +599,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         NSApp.activate(ignoringOtherApps: true)
         appendLog("settings open requested")
         do {
-            let config = try AppConfig.load(from: configURL)
-            appendLog("settings config loaded")
+            let hadCachedConfig = currentConfig != nil
+            let configSource = hadCachedConfig ? "memory" : "disk"
+            let config = try SettingsConfigurationSource.resolve(current: currentConfig) { [configURL] in
+                try AppConfig.load(from: configURL)
+            }
+            appendLog("settings config ready source=\(configSource)")
             currentConfig = config
             let password = try KeychainStore.obsPassword.read() ?? ""
             appendLog("settings keychain read ok")

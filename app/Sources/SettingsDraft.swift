@@ -19,6 +19,18 @@ struct SettingsDraftError: LocalizedError, Equatable {
     var errorDescription: String? { message }
 }
 
+enum SettingsConfigurationSource {
+    static func resolve(
+        current: AppConfig?,
+        load: () throws -> AppConfig
+    ) rethrows -> AppConfig {
+        if let current {
+            return current
+        }
+        return try load()
+    }
+}
+
 struct SettingsDraft {
     var obsHost: String
     var obsPort: String
