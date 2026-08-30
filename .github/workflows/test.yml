@@ -35,5 +35,15 @@ jobs:
             app/Tests/OBSProtocolTests.swift \
             -o /tmp/obs-protocol-tests
           /tmp/obs-protocol-tests
+      - name: Run OBS connection state tests
+        run: |
+          xcrun --sdk macosx swiftc -parse-as-library \
+            -framework CryptoKit \
+            app/Sources/SceneAutomation.swift \
+            app/Sources/OBSProtocol.swift \
+            app/Sources/OBSConnectionState.swift \
+            app/Tests/OBSConnectionStateTests.swift \
+            -o /tmp/obs-connection-state-tests
+          /tmp/obs-connection-state-tests
       - name: Build macOS app
         run: ./build_app.sh
