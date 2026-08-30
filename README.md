@@ -3,6 +3,7 @@
 [![macOS](https://img.shields.io/badge/macOS-13%2B-black?logo=apple)](https://www.apple.com/macos/)
 [![Python](https://img.shields.io/badge/Python-3.x-3776AB?logo=python&logoColor=white)](https://www.python.org/)
 [![Swift](https://img.shields.io/badge/Swift-native%20menu%20bar-F05138?logo=swift&logoColor=white)](https://www.swift.org/)
+[![Latest release](https://img.shields.io/github/v/release/Vencite/ven-obs-utils)](https://github.com/Vencite/ven-obs-utils/releases/latest)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 ![Vibe coded](https://img.shields.io/badge/vibe--coded-yes-8A2BE2)
 
@@ -54,9 +55,10 @@ The app supervises the Python service. The actual Ontime decision logic stays in
 
 - macOS 13+
 - Python 3
-- Apple Command Line Tools / Xcode toolchain
 - [Ontime](https://www.getontime.no/)
 - [OBS Studio](https://obsproject.com/)
+
+If you download a prebuilt release, you do not need Xcode or the Apple Command Line Tools just to run the app.
 
 For automatic triggering from OBS I use [Advanced Scene Switcher](https://github.com/WarmUpTill/SceneSwitcher), but VEN OBS Utils itself only exposes a local HTTP endpoint. Any automation capable of making the request can use it.
 
@@ -67,9 +69,21 @@ Useful upstream docs:
 - [OBS Knowledge Base](https://obsproject.com/kb)
 - [Advanced Scene Switcher](https://github.com/WarmUpTill/SceneSwitcher)
 
-## Build and install
+## Download and install
 
-Clone the repo and run:
+For most people, the easiest option is the latest GitHub Release:
+
+**[Download the latest release](https://github.com/Vencite/ven-obs-utils/releases/latest)**
+
+Download the `.dmg`, open it and drag **VEN OBS Utils** to Applications.
+
+The release builds are ad-hoc signed, but they are **not Developer ID signed or notarized by Apple**. macOS may therefore warn you when you open the app for the first time. Depending on your macOS version, you may need to use **Open** from the app's context menu or allow it in **System Settings -> Privacy & Security**.
+
+A `.zip` containing the same `.app` is also attached to each release.
+
+## Build from source
+
+Building from source additionally requires the Apple Command Line Tools / Xcode toolchain.
 
 ```bash
 git clone https://github.com/Vencite/ven-obs-utils.git
@@ -89,6 +103,23 @@ The build script explicitly selects the active macOS SDK through `xcrun`, which 
 and opens it.
 
 Before starting the app, stop any older manually running copy of the helper if it is already using port `8765`.
+
+## Releases
+
+Releases are built automatically by GitHub Actions.
+
+Pushing a tag matching `v*`, for example:
+
+```bash
+git tag v0.1.0
+git push origin v0.1.0
+```
+
+runs the macOS build, executes the backend tests, packages the app as both `.dmg` and `.zip`, and publishes both files to a GitHub Release.
+
+The release tag is also used as the app version. A tag such as `v0.2.1` produces an app with version `0.2.1`.
+
+There is currently no Developer ID signing or Apple notarization step in this workflow.
 
 ## Configuration
 
@@ -195,6 +226,9 @@ Issues and sensible PRs are welcome.
 
 ```text
 ven-obs-utils/
+├── .github/workflows/
+│   ├── release.yml
+│   └── test.yml
 ├── app/Sources/main.swift
 ├── services/ontime_break_sync.py
 ├── config/config.example.json
