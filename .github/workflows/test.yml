@@ -48,7 +48,10 @@ jobs:
       - name: Run OBS websocket routing tests
         run: |
           xcrun --sdk macosx swiftc -parse-as-library \
+            -framework CryptoKit \
             app/Sources/SceneAutomation.swift \
+            app/Sources/OBSProtocol.swift \
+            app/Sources/OBSConnectionState.swift \
             app/Sources/OBSWebSocketClient.swift \
             app/Tests/OBSWebSocketClientTests.swift \
             -o /tmp/obs-websocket-client-tests
