@@ -56,5 +56,14 @@ jobs:
             app/Tests/OBSWebSocketClientTests.swift \
             -o /tmp/obs-websocket-client-tests
           /tmp/obs-websocket-client-tests
+      - name: Run settings form tests
+        run: |
+          xcrun --sdk macosx swiftc -parse-as-library \
+            app/Sources/SceneAutomation.swift \
+            app/Sources/AppConfig.swift \
+            app/Sources/SettingsDraft.swift \
+            app/Tests/SettingsDraftTests.swift \
+            -o /tmp/settings-draft-tests
+          /tmp/settings-draft-tests
       - name: Build macOS app
         run: ./build_app.sh
