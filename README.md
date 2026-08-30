@@ -321,7 +321,7 @@ ven-obs-utils/
 │   └── test.yml
 ├── app/
 │   ├── Sources/
-│   │   ├── main.swift
+│   │   ├── ApplicationMain.swift
 │   │   ├── AppConfig.swift
 │   │   ├── KeychainStore.swift
 │   │   ├── OBSProtocol.swift
