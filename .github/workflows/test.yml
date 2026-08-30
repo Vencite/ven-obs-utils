@@ -56,6 +56,14 @@ jobs:
             app/Tests/OBSWebSocketClientTests.swift \
             -o /tmp/obs-websocket-client-tests
           /tmp/obs-websocket-client-tests
+      - name: Run automation request ordering tests
+        run: |
+          xcrun --sdk macosx swiftc -parse-as-library \
+            app/Sources/SceneAutomation.swift \
+            app/Sources/AutomationRequestSequence.swift \
+            app/Tests/AutomationRequestSequenceTests.swift \
+            -o /tmp/automation-request-sequence-tests
+          /tmp/automation-request-sequence-tests
       - name: Run settings form tests
         run: |
           xcrun --sdk macosx swiftc -parse-as-library \
