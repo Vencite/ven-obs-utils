@@ -19,7 +19,7 @@ struct OBSProtocolTests {
             salt: "lM1GncleQOaCu9lT1yeUZhFYnqhsLLP1G5lAGo3ixaI=",
             challenge: "+IxH4CnCiqpX1rM9scsNynZzbOe4KhDeYcTNS3PDaeY="
         )
-        guard auth == "Dj6cLS+jrNA0HpCArRg0Z/Fc+YHdt2FQfAvgD1mip6Y=" else {
+        guard auth == "1Ct943GAT+6YQUUX47Ia/ncufilbe6+oD6lY+5kaCu4=" else {
             throw OBSProtocolTestFailure("authentication vector mismatch")
         }
     }
