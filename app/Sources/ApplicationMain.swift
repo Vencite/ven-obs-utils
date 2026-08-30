@@ -160,8 +160,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
         setIcon(state: .warning, tooltip: appName)
 
+        let version = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "?"
         let menu = NSMenu()
-        let header = NSMenuItem(title: appName, action: nil, keyEquivalent: "")
+        let header = NSMenuItem(title: "\(appName)  \(version)", action: nil, keyEquivalent: "")
         header.isEnabled = false
         menu.addItem(header)
         menu.addItem(.separator())
@@ -487,7 +488,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         switch state {
         case .ready:
-            button.contentTintColor = nil
+            // Explicit white tint: guarantees the template icon renders white
+            // even if the forced dark appearance is ignored by the status item.
+            button.contentTintColor = .white
         case .warning:
             button.contentTintColor = .systemOrange
         case .working:
@@ -589,6 +592,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc private func showSettings() {
+        // Menu-bar apps have no dock icon; without activation a modal alert or
+        // settings window can silently fail to come to the front.
+        NSApp.activate(ignoringOtherApps: true)
+        appendLog("settings open requested")
         do {
             let config = try AppConfig.load(from: configURL)
             currentConfig = config
