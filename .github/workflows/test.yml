@@ -65,5 +65,12 @@ jobs:
             app/Tests/SettingsDraftTests.swift \
             -o /tmp/settings-draft-tests
           /tmp/settings-draft-tests
+      - name: Run status presentation tests
+        run: |
+          xcrun --sdk macosx swiftc -parse-as-library \
+            app/Sources/StatusPresentation.swift \
+            app/Tests/StatusPresentationTests.swift \
+            -o /tmp/status-presentation-tests
+          /tmp/status-presentation-tests
       - name: Build macOS app
         run: ./build_app.sh
