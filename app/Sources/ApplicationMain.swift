@@ -103,6 +103,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var logURL: URL { supportDirectory.appendingPathComponent("ven-obs-utils.log") }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        let version = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "?"
+        appendLog("startup version=\(version)")
         NSApp.setActivationPolicy(.accessory)
         setupMenu()
         setupOBSCallbacks()
