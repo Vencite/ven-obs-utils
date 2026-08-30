@@ -7,6 +7,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
     private let initialDraft: SettingsDraft
     private let onSave: SaveHandler
     private let onOpenConfig: () -> Void
+    private let onDiagnostic: (String) -> Void
 
     private let obsHostField = NSTextField()
     private let obsPortField = NSTextField()
@@ -22,10 +23,17 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
     private let generalErrorLabel = NSTextField(labelWithString: "")
     private var errorLabels: [SettingsDraftField: NSTextField] = [:]
 
-    init(draft: SettingsDraft, onSave: @escaping SaveHandler, onOpenConfig: @escaping () -> Void) {
+    init(
+        draft: SettingsDraft,
+        onSave: @escaping SaveHandler,
+        onOpenConfig: @escaping () -> Void,
+        onDiagnostic: @escaping (String) -> Void
+    ) {
+        onDiagnostic("settings panel init started")
         self.initialDraft = draft
         self.onSave = onSave
         self.onOpenConfig = onOpenConfig
+        self.onDiagnostic = onDiagnostic
 
         let window = NSPanel(
             contentRect: NSRect(x: 0, y: 0, width: 590, height: 650),
@@ -33,6 +41,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
             backing: .buffered,
             defer: false
         )
+        onDiagnostic("settings panel created")
         window.title = "VEN OBS Utils - Settings"
         window.isReleasedWhenClosed = false
         window.isFloatingPanel = true
@@ -42,8 +51,11 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         window.center()
         super.init(window: window)
         window.delegate = self
+        onDiagnostic("settings panel build_ui started")
         buildUI()
+        onDiagnostic("settings panel build_ui completed")
         populate(draft)
+        onDiagnostic("settings panel populate completed")
     }
 
     required init?(coder: NSCoder) {
@@ -76,6 +88,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         scrollView.autohidesScrollers = true
         scrollView.drawsBackground = false
         contentView.addSubview(scrollView)
+        onDiagnostic("settings panel scroll_view added")
 
         let documentView = NSView()
         documentView.translatesAutoresizingMaskIntoConstraints = false
@@ -87,6 +100,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         form.spacing = 12
         form.translatesAutoresizingMaskIntoConstraints = false
         documentView.addSubview(form)
+        onDiagnostic("settings panel form created")
 
         form.addArrangedSubview(sectionHeader("OBS"))
         form.addArrangedSubview(fieldRow(label: "Host", field: obsHostField, key: .obsHost))
@@ -113,6 +127,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         let openConfigButton = NSButton(title: "Open config file", target: self, action: #selector(openConfig))
         openConfigButton.bezelStyle = .rounded
         form.addArrangedSubview(openConfigButton)
+        onDiagnostic("settings panel form fields added")
 
         generalErrorLabel.textColor = .systemRed
         generalErrorLabel.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
@@ -139,6 +154,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         buttons.addArrangedSubview(cancel)
         buttons.addArrangedSubview(save)
         contentView.addSubview(buttons)
+        onDiagnostic("settings panel buttons added")
 
         NSLayoutConstraint.activate([
             scrollView.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 8),
@@ -156,6 +172,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
             form.topAnchor.constraint(equalTo: documentView.topAnchor, constant: 16),
             form.bottomAnchor.constraint(equalTo: documentView.bottomAnchor, constant: -16),
         ])
+        onDiagnostic("settings panel constraints activated")
     }
 
     private func sectionHeader(_ title: String) -> NSTextField {

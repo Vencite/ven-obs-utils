@@ -659,6 +659,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     onOpenConfig: { [weak self] in
                         guard let self else { return }
                         NSWorkspace.shared.open(self.configURL)
+                    },
+                    onDiagnostic: { [weak self] message in
+                        self?.appendLog(message)
                     }
                 )
                 self.settingsController = controller
