@@ -10,6 +10,38 @@ enum ScenePatternError: Error, Equatable {
     case invalidRegex
 }
 
+struct ProgramSceneTransition: Equatable {
+    let previous: String
+    let current: String
+    let action: SceneTransitionAction
+}
+
+struct OBSProgramSceneTracker {
+    private(set) var currentScene: String?
+
+    mutating func resetForReconnect() {
+        currentScene = nil
+    }
+
+    mutating func receive(scene: String, pattern: String) throws -> ProgramSceneTransition? {
+        guard let previous = currentScene else {
+            currentScene = scene
+            return nil
+        }
+        guard previous != scene else {
+            return nil
+        }
+
+        let action = try SceneTransitionClassifier.classify(
+            previous: previous,
+            current: scene,
+            pattern: pattern
+        )
+        currentScene = scene
+        return ProgramSceneTransition(previous: previous, current: scene, action: action)
+    }
+}
+
 enum SceneTransitionClassifier {
     static func validate(pattern: String) throws {
         do {
