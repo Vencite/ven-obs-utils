@@ -39,7 +39,7 @@ struct AppConfig {
         }
         guard version < currentConfigVersion else { return false }
 
-        let config = try load(from: url)
+        let config = try decode(from: url)
         let backupURL = url.appendingPathExtension("backup")
         let fileManager = FileManager.default
 
@@ -52,6 +52,11 @@ struct AppConfig {
     }
 
     static func load(from url: URL) throws -> AppConfig {
+        _ = try migrateIfNeeded(at: url)
+        return try decode(from: url)
+    }
+
+    private static func decode(from url: URL) throws -> AppConfig {
         let data = try Data(contentsOf: url)
         guard let root = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
             throw ConfigValidationError.invalid("Config root must be a JSON object")
