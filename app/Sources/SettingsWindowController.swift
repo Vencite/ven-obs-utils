@@ -7,7 +7,6 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
     private let initialDraft: SettingsDraft
     private let onSave: SaveHandler
     private let onOpenConfig: () -> Void
-    private let onDiagnostic: (String) -> Void
 
     private let obsHostField = NSTextField()
     private let obsPortField = NSTextField()
@@ -26,14 +25,11 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
     init(
         draft: SettingsDraft,
         onSave: @escaping SaveHandler,
-        onOpenConfig: @escaping () -> Void,
-        onDiagnostic: @escaping (String) -> Void
+        onOpenConfig: @escaping () -> Void
     ) {
-        onDiagnostic("settings panel init started")
         self.initialDraft = draft
         self.onSave = onSave
         self.onOpenConfig = onOpenConfig
-        self.onDiagnostic = onDiagnostic
 
         let window = NSPanel(
             contentRect: NSRect(x: 0, y: 0, width: 590, height: 650),
@@ -41,7 +37,6 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
             backing: .buffered,
             defer: false
         )
-        onDiagnostic("settings panel created")
         window.title = "VEN OBS Utils - Settings"
         window.isReleasedWhenClosed = false
         window.isFloatingPanel = true
@@ -51,11 +46,8 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         window.center()
         super.init(window: window)
         window.delegate = self
-        onDiagnostic("settings panel build_ui started")
         buildUI()
-        onDiagnostic("settings panel build_ui completed")
         populate(draft)
-        onDiagnostic("settings panel populate completed")
     }
 
     required init?(coder: NSCoder) {
@@ -88,7 +80,6 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         scrollView.autohidesScrollers = true
         scrollView.drawsBackground = false
         contentView.addSubview(scrollView)
-        onDiagnostic("settings panel scroll_view added")
 
         let documentView = NSView()
         documentView.translatesAutoresizingMaskIntoConstraints = false
@@ -100,11 +91,8 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         form.spacing = 12
         form.translatesAutoresizingMaskIntoConstraints = false
         documentView.addSubview(form)
-        onDiagnostic("settings panel form created")
 
-        onDiagnostic("settings panel obs header adding")
         form.addArrangedSubview(sectionHeader("OBS"))
-        onDiagnostic("settings panel obs header added")
         form.addArrangedSubview(fieldRow(label: "Host", field: obsHostField, key: .obsHost))
         form.addArrangedSubview(fieldRow(label: "Port", field: obsPortField, key: .obsPort))
         form.addArrangedSubview(fieldRow(label: "Password", field: passwordField, key: .password))
@@ -129,7 +117,6 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         let openConfigButton = NSButton(title: "Open config file", target: self, action: #selector(openConfig))
         openConfigButton.bezelStyle = .rounded
         form.addArrangedSubview(openConfigButton)
-        onDiagnostic("settings panel form fields added")
 
         generalErrorLabel.textColor = .systemRed
         generalErrorLabel.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
@@ -156,16 +143,15 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         buttons.addArrangedSubview(cancel)
         buttons.addArrangedSubview(save)
         contentView.addSubview(buttons)
-        onDiagnostic("settings panel buttons added")
 
         NSLayoutConstraint.activate([
             scrollView.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 8),
             scrollView.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -8),
             scrollView.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 8),
             scrollView.bottomAnchor.constraint(equalTo: buttons.topAnchor, constant: -12),
-            buttons.leadingAnchor.constraint(equalTo: contentView.leadingAnchor),
-            buttons.trailingAnchor.constraint(equalTo: contentView.trailingAnchor),
-            buttons.bottomAnchor.constraint(equalTo: contentView.bottomAnchor, constant: -8),
+            buttons.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 12),
+            buttons.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -12),
+            buttons.bottomAnchor.constraint(equalTo: contentView.bottomAnchor, constant: -12),
             documentView.leadingAnchor.constraint(equalTo: scrollView.contentView.leadingAnchor),
             documentView.topAnchor.constraint(equalTo: scrollView.contentView.topAnchor),
             documentView.widthAnchor.constraint(equalTo: scrollView.contentView.widthAnchor),
@@ -174,7 +160,6 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
             form.topAnchor.constraint(equalTo: documentView.topAnchor, constant: 16),
             form.bottomAnchor.constraint(equalTo: documentView.bottomAnchor, constant: -16),
         ])
-        onDiagnostic("settings panel constraints activated")
     }
 
     private func sectionHeader(_ title: String) -> NSTextField {
@@ -195,7 +180,6 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         key: SettingsDraftField,
         suffix: String? = nil
     ) -> NSView {
-        onDiagnostic("settings panel field_row \(label) started")
         let container = NSStackView()
         container.orientation = .vertical
         container.alignment = .leading
@@ -211,7 +195,6 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         labelView.widthAnchor.constraint(equalToConstant: 150).isActive = true
 
         field.widthAnchor.constraint(equalToConstant: suffix == nil ? 350 : 270).isActive = true
-        onDiagnostic("settings panel field_row \(label) field constraints activated")
         row.addArrangedSubview(labelView)
         row.addArrangedSubview(field)
 
@@ -238,7 +221,6 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
 
         container.addArrangedSubview(row)
         container.addArrangedSubview(errorIndent)
-        onDiagnostic("settings panel field_row \(label) completed")
         return container
     }
 

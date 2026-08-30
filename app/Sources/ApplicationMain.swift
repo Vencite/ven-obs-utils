@@ -632,6 +632,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc private func showSettings() {
         appendLog("settings open requested")
+        let duplicateApps = otherRunningCopies()
+        guard duplicateApps.isEmpty else {
+            showDuplicateCopiesWarning(duplicateApps)
+            return
+        }
         do {
             let hadCachedConfig = currentConfig != nil
             let configSource = hadCachedConfig ? "memory" : "disk"
@@ -643,30 +648,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             let password = try KeychainStore.obsPassword.read() ?? ""
             appendLog("settings keychain read ok")
             let draft = SettingsDraft(config: config, password: password)
-            appendLog("settings controller creation scheduled")
             // A timer in the default run-loop mode fires only after AppKit has
             // exited the status-menu tracking loop. Dispatching straight back
             // to the main queue can still run while that loop owns the menu.
             Timer.scheduledTimer(withTimeInterval: 0.1, repeats: false) { [weak self] _ in
-                guard let self else { return }
-                self.appendLog("settings controller creation started")
-                let controller = SettingsWindowController(
-                    draft: draft,
-                    onSave: { [weak self] draft in
-                        guard let self else { return }
-                        try self.saveSettings(draft)
-                    },
-                    onOpenConfig: { [weak self] in
-                        guard let self else { return }
-                        NSWorkspace.shared.open(self.configURL)
-                    },
-                    onDiagnostic: { [weak self] message in
-                        self?.appendLog(message)
-                    }
-                )
-                self.settingsController = controller
-                self.appendLog("settings controller created policy=\(NSApp.activationPolicy().rawValue)")
-                controller.present()
+                Task { @MainActor [weak self] in
+                    guard let self else { return }
+                    let controller = SettingsWindowController(
+                        draft: draft,
+                        onSave: { [weak self] draft in
+                            guard let self else { return }
+                            try self.saveSettings(draft)
+                        },
+                        onOpenConfig: { [weak self] in
+                            guard let self else { return }
+                            NSWorkspace.shared.open(self.configURL)
+                        }
+                    )
+                    self.settingsController = controller
+                    self.appendLog("settings controller created policy=\(NSApp.activationPolicy().rawValue)")
+                    controller.present()
+                }
             }
         } catch {
             appendLog("settings open_error=\(error.localizedDescription)")
@@ -675,6 +677,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             alert.informativeText = error.localizedDescription
             alert.runModal()
         }
+    }
+
+    private func otherRunningCopies() -> [NSRunningApplication] {
+        guard let bundleIdentifier = Bundle.main.bundleIdentifier else { return [] }
+        let ownPID = ProcessInfo.processInfo.processIdentifier
+        return NSWorkspace.shared.runningApplications.filter {
+            $0.bundleIdentifier == bundleIdentifier && $0.processIdentifier != ownPID
+        }
+    }
+
+    private func showDuplicateCopiesWarning(_ applications: [NSRunningApplication]) {
+        let copies = applications.map {
+            $0.bundleURL?.path ?? "PID \($0.processIdentifier)"
+        }.joined(separator: "\n")
+        appendLog("settings blocked reason=other_app_copy_running count=\(applications.count)")
+        NSApp.setActivationPolicy(.regular)
+        NSApp.activate(ignoringOtherApps: true)
+        let alert = NSAlert()
+        alert.messageText = "Another VEN OBS Utils copy is running"
+        alert.informativeText = "Quit the other copy before opening Settings:\n\n\(copies)"
+        alert.addButton(withTitle: "OK")
+        alert.runModal()
+        NSApp.setActivationPolicy(.accessory)
     }
 
     @objc private func restartService() {
