@@ -1,4 +1,5 @@
 import Foundation
+import CoreFoundation
 
 struct AppConfig {
     var ontimeBaseURL: String
@@ -17,9 +18,11 @@ struct AppConfig {
     var enterBreakEnabled: Bool
     var leaveBreakEnabled: Bool
 
+    var mediaBridge: [String: Any] = [:]
+
     private var rawRoot: [String: Any]
 
-    static let currentConfigVersion = 1
+    static let currentConfigVersion = 2
     static let defaultOBSHost = "127.0.0.1"
     static let defaultOBSPort = 4455
     static let defaultOBSBreakSceneRegex = #"^PRZERWA_.*$"#
@@ -108,6 +111,7 @@ struct AppConfig {
             obsReconnectSeconds: double(obs["reconnect_seconds"], default: defaultOBSReconnectSeconds),
             enterBreakEnabled: bool(automation["enter_break"], default: true),
             leaveBreakEnabled: bool(automation["leave_break"], default: true),
+            mediaBridge: root["media_bridge"] as? [String: Any] ?? [:],
             rawRoot: root
         )
     }
@@ -144,6 +148,63 @@ struct AppConfig {
         } catch {
             throw ConfigValidationError.invalid("Ontime break CUE regex is invalid")
         }
+        let media = mediaBridge
+        if let enabled = media["enabled"], !Self.isBoolean(enabled) {
+            throw ConfigValidationError.invalid("Media bridge enabled must be a boolean")
+        }
+        for section in ["txt", "json", "timer", "http"] {
+            if let value = media[section], !(value is [String: Any]) {
+                throw ConfigValidationError.invalid("Invalid media \(section) configuration")
+            }
+        }
+        for (section, key) in [("txt", "enabled"), ("json", "enabled"), ("http", "media_enabled"), ("timer", "change_stage_timer_secondary_source")] {
+            if let value = (media[section] as? [String: Any])?[key], !Self.isBoolean(value) {
+                throw ConfigValidationError.invalid("Media toggles must be booleans")
+            }
+        }
+        if media["enabled"] as? Bool == true {
+            guard ["127.0.0.1", "localhost"].contains(serverHost) else {
+                throw ConfigValidationError.invalid("Media bridge requires a loopback helper address")
+            }
+            let mode = media["source_mode"] as? String ?? "follow_program"
+            guard ["explicit", "follow_program"].contains(mode) else {
+                throw ConfigValidationError.invalid("Invalid media source mode")
+            }
+            if mode == "explicit",
+               (media["source_uuid"] as? String ?? "").isEmpty,
+               (media["source_name"] as? String ?? "").isEmpty {
+                throw ConfigValidationError.invalid("Choose an MPS source UUID or name")
+            }
+            let txt = media["txt"] as? [String: Any] ?? [:]
+            if txt["enabled"] as? Bool == true {
+                guard let path = txt["path"] as? String, path.hasPrefix("/"), !path.contains("\0") else {
+                    throw ConfigValidationError.invalid("Media TXT path must be absolute")
+                }
+            }
+            for section in ["txt", "json"] {
+                let output = media[section] as? [String: Any] ?? [:]
+                if output["enabled"] as? Bool == true,
+                   (!(output["path"] as? String ?? "").hasPrefix("/") || (output["path"] as? String ?? "").contains("\0")) {
+                    throw ConfigValidationError.invalid("Media export paths must be absolute")
+                }
+            }
+            let json = media["json"] as? [String: Any] ?? [:]
+            if txt["enabled"] as? Bool == true, json["enabled"] as? Bool == true,
+               txt["path"] as? String == json["path"] as? String {
+                throw ConfigValidationError.invalid("TXT and JSON export paths must differ")
+            }
+            let timer = media["timer"] as? [String: Any] ?? [:]
+            guard Self.validMediaTemplate(timer["secondary_message_template"] as? String ?? "{current_file}") else {
+                throw ConfigValidationError.invalid("Invalid media message template")
+            }
+            guard ["off", "current_item", "playlist"].contains(timer["media_timer_source"] as? String ?? "off"),
+                  ["auxiliary_timer", "secondary_message"].contains(timer["ontime_output"] as? String ?? "auxiliary_timer"),
+                  (1...3).contains(timer["aux_timer_index"] as? Int ?? 1),
+                  ["stop", "keep_last"].contains(timer["inactive_policy"] as? String ?? "stop"),
+                  ["clear_when_inactive", "keep_last"].contains(txt["clear_policy"] as? String ?? "clear_when_inactive") else {
+                throw ConfigValidationError.invalid("Invalid media timer or TXT policy")
+            }
+        }
         return self
     }
 
@@ -152,6 +213,10 @@ struct AppConfig {
 
         var root = rawRoot
         root["config_version"] = Self.currentConfigVersion
+        var media = mediaBridge
+        if media["enabled"] == nil { media["enabled"] = false }
+        if media["source_mode"] == nil { media["source_mode"] = "follow_program" }
+        root["media_bridge"] = media
 
         var ontime = root["ontime"] as? [String: Any] ?? [:]
         ontime["base_url"] = ontimeBaseURL.trimmingCharacters(in: .whitespacesAndNewlines).trimmingCharacters(in: CharacterSet(charactersIn: "/"))
@@ -194,6 +259,27 @@ struct AppConfig {
             withIntermediateDirectories: true
         )
         try data.write(to: url, options: .atomic)
+    }
+
+    private static func validMediaTemplate(_ text: String) -> Bool {
+        guard text.count <= 2048 else { return false }
+        let allowed = ["current_file", "remaining_hhmmss", "playlist_remaining_hhmmss"]
+        let chars = Array(text)
+        var i = 0
+        while i < chars.count {
+            if chars[i] == "{" || chars[i] == "}" {
+                if i + 1 < chars.count && chars[i + 1] == chars[i] { i += 2; continue }
+                guard chars[i] == "{", let end = chars[(i + 1)...].firstIndex(of: "}"),
+                      allowed.contains(String(chars[(i + 1)..<end])) else { return false }
+                i = end + 1
+            } else { i += 1 }
+        }
+        return true
+    }
+
+    private static func isBoolean(_ value: Any) -> Bool {
+        guard let number = value as? NSNumber else { return false }
+        return CFGetTypeID(number) == CFBooleanGetTypeID()
     }
 
     private static func string(_ value: Any?, default defaultValue: String) -> String {

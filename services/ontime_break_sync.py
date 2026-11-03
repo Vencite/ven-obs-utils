@@ -4,16 +4,22 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import os
+import hmac
+import ipaddress
+import signal
 import re
 import threading
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any, Callable
 from urllib.parse import quote
 from urllib.request import Request, urlopen
 
+
+from media_bridge import MediaBridge
 
 DEFAULT_BREAK_CUE_REGEX = r"^BRK_\d+$"
 LOG = logging.getLogger("ontime-break-sync")
@@ -28,6 +34,7 @@ class Config:
     request_timeout_seconds: float = 3.0
     server_host: str = "127.0.0.1"
     server_port: int = 8765
+    media_bridge: dict = field(default_factory=dict)
 
 
 def load_config(path: Path) -> Config:
@@ -62,6 +69,7 @@ def load_config(path: Path) -> Config:
         request_timeout_seconds=request_timeout_seconds,
         server_host=server_host,
         server_port=server_port,
+        media_bridge=data.get("media_bridge", {}),
     )
 
 
@@ -262,6 +270,25 @@ def get_current_ontime_event(config: Config) -> dict[str, Any] | None:
 def create_local_server(
     config: Config, host: str = "127.0.0.1", port: int = 8765
 ) -> ThreadingHTTPServer:
+    media_config = config.media_bridge
+    if not isinstance(media_config, dict):
+        raise ValueError("media_bridge must be an object")
+    if media_config.get("enabled") is True and host not in {"127.0.0.1", "localhost", "::1"}:
+        raise ValueError("media bridge requires a loopback helper address")
+    ipc_token = os.environ.get("VEN_MEDIA_IPC_TOKEN", "")
+    control_token = os.environ.get("VEN_MEDIA_CONTROL_TOKEN", "")
+
+    def media_get(path):
+        request = Request(config.ontime_base_url + path, headers={"Accept": "application/json"})
+        with urlopen(request, timeout=config.request_timeout_seconds) as response:
+            body = response.read(2 * 1024 * 1024 + 1)
+            if len(body) > 2 * 1024 * 1024:
+                raise ValueError("ontime_response_too_large")
+            if path == "/api/poll":
+                return json.loads(body)
+            return {}
+
+    media = MediaBridge(media_config, config.dry_run, media_get)
     state_lock = threading.Lock()
     action_execution_lock = threading.Lock()
     state: dict[str, Any] = {
@@ -270,7 +297,75 @@ def create_local_server(
     }
 
     class Handler(BaseHTTPRequestHandler):
+        def setup(self):
+            super().setup()
+            self.connection.settimeout(3)
+
+        def _authorized(self, token):
+            return (bool(token) and ipaddress.ip_address(self.client_address[0]).is_loopback
+                    and hmac.compare_digest(self.headers.get("Authorization", "").encode(), ("Bearer " + token).encode()))
+
+        def do_POST(self):
+            private = self.path.startswith("/media/_")
+            if not self.path.startswith("/media/"):
+                self._send_json(404, {"status": "error", "reason": "not_found"})
+                return
+            if not self._authorized(ipc_token if private else control_token):
+                self._send_json(403, {"status": "error", "reason": "forbidden"})
+                return
+            try:
+                length = int(self.headers.get("Content-Length", "0"))
+                if length < 0 or length > 65536 or self.headers.get("Transfer-Encoding"):
+                    self._send_json(413, {"status": "error", "reason": "invalid_body_size"})
+                    self.close_connection = True
+                    return
+                raw = self.rfile.read(length)
+                if len(raw) != length:
+                    raise ValueError("incomplete_body")
+                body = json.loads(raw) if raw else {}
+                if not isinstance(body, dict):
+                    raise ValueError("invalid_body")
+                if self.path == "/media/_session":
+                    result = media.reset_session(body.get("session"))
+                elif self.path == "/media/_snapshot":
+                    result = media.ingest(body)
+                elif self.path == "/media/_control-result":
+                    result = media.complete_control(body.get("id"), body.get("result"))
+                elif self.path in {"/media/play", "/media/pause", "/media/next", "/media/previous", "/media/restart", "/media/stop"}:
+                    result = media.request_control(self.path.rsplit("/", 1)[1])
+                else:
+                    self._send_json(404, {"status": "error", "reason": "not_found"})
+                    return
+                code = 202 if result.get("status") == "queued" else (409 if result.get("status") == "error" else 200)
+                self._send_json(code, result)
+            except (ValueError, TypeError, KeyError, UnicodeError) as exc:
+                self._send_json(400, {"status": "error", "reason": "invalid_media_request"})
+            except (TimeoutError, OSError):
+                self.close_connection = True
+
         def do_GET(self):
+            if self.path == "/media/_controls":
+                if not self._authorized(ipc_token):
+                    self._send_json(403, {"status": "error", "reason": "forbidden"})
+                else:
+                    self._send_json(200, {"controls": media.take_controls()})
+                return
+            if self.path == "/media/status":
+                self._send_json(200, media.status())
+                return
+            if self.path == "/media/current-file":
+                text = media.current_file()
+                body = (text + "\n" if text else "").encode("utf-8")
+                self.send_response(200)
+                self.send_header("Content-Type", "text/plain; charset=utf-8")
+                self.send_header("Cache-Control", "no-store")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+                return
+            if self.path.startswith("/media/"):
+                self._send_json(405, {"status": "error", "reason": "use_post"})
+                return
             if self.path == "/health":
                 try:
                     self._send_json(200, check_ontime(config))
@@ -296,6 +391,7 @@ def create_local_server(
                             "mode": "dry_run" if config.dry_run else "live",
                             "break_cue_regex": config.break_cue_regex,
                             "last_action": last_action,
+                            "media": media.status(),
                         },
                     )
                 except Exception as exc:
@@ -312,6 +408,7 @@ def create_local_server(
                             "mode": "dry_run" if config.dry_run else "live",
                             "break_cue_regex": config.break_cue_regex,
                             "last_action": last_action,
+                            "media": media.status(),
                         },
                     )
                 return
@@ -369,7 +466,18 @@ def create_local_server(
         def log_message(self, fmt, *args):
             LOG.debug("HTTP: " + fmt, *args)
 
-    return ThreadingHTTPServer((host, port), Handler)
+    class LocalServer(ThreadingHTTPServer):
+        daemon_threads = True
+
+        def server_close(self):
+            try:
+                media.close()
+            finally:
+                super().server_close()
+
+    server = LocalServer((host, port), Handler)
+    media.start()
+    return server
 
 
 def main() -> int:
@@ -383,6 +491,10 @@ def main() -> int:
         datefmt="%H:%M:%S",
     )
 
+    def terminate(_signal, _frame):
+        raise KeyboardInterrupt()
+
+    signal.signal(signal.SIGTERM, terminate)
     config_path = Path(args.config).expanduser().resolve()
     try:
         config = load_config(config_path)

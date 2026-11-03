@@ -1,5 +1,5 @@
 {
-  "config_version": 1,
+  "config_version": 2,
   "ontime": {
     "base_url": "https://your-ontime.example.com",
     "break_cue_regex": "^BRK_\\d+$",
@@ -22,5 +22,27 @@
   "safety": {
     "dry_run": true,
     "debounce_seconds": 2
+  },
+  "media_bridge": {
+    "enabled": false,
+    "source_mode": "follow_program",
+    "source_uuid": "",
+    "source_name": "",
+    "txt": {
+      "enabled": false,
+      "path": "",
+      "clear_policy": "clear_when_inactive"
+    },
+    "timer": {
+      "media_timer_source": "off",
+      "ontime_output": "auxiliary_timer",
+      "aux_timer_index": 1,
+      "inactive_policy": "stop",
+      "secondary_message_template": "{current_file} \u00b7 {playlist_remaining_hhmmss}",
+      "change_stage_timer_secondary_source": false
+    },
+    "http": {
+      "media_enabled": false
+    }
   }
 }

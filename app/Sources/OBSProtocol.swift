@@ -11,6 +11,7 @@ enum OBSProtocolMessage {
         success: Bool,
         responseData: [String: Any]
     )
+    case event(type: String, data: [String: Any])
     case ignored
 }
 
@@ -66,7 +67,12 @@ enum OBSProtocolCodec {
                 throw OBSProtocolError.invalidMessage("Event is missing eventType")
             }
             guard eventType == "CurrentProgramSceneChanged" else {
-                return .ignored
+                guard ["VendorEvent", "SceneItemEnableStateChanged", "SceneItemCreated", "SceneItemRemoved",
+                       "SceneItemListReindexed", "SceneNameChanged", "SceneListChanged", "InputNameChanged", "InputCreated", "InputRemoved"].contains(eventType) else { return .ignored }
+                guard let eventData = payload["eventData"] as? [String: Any] else {
+                    throw OBSProtocolError.invalidMessage("Event is missing eventData")
+                }
+                return .event(type: eventType, data: eventData)
             }
             guard let eventData = payload["eventData"] as? [String: Any],
                   let sceneName = eventData["sceneName"] as? String,
@@ -95,20 +101,17 @@ enum OBSProtocolCodec {
     }
 
     static func identifyJSON(rpcVersion: Int, authentication: String?) throws -> String {
-        var payload: [String: Any] = ["rpcVersion": rpcVersion]
+        var payload: [String: Any] = ["rpcVersion": rpcVersion, "eventSubscriptions": 1 | 4 | 8 | 128 | 512]
         if let authentication, !authentication.isEmpty {
             payload["authentication"] = authentication
         }
         return try encode(["op": 1, "d": payload])
     }
 
-    static func requestJSON(requestType: String, requestId: String) throws -> String {
+    static func requestJSON(requestType: String, requestId: String, requestData: [String: Any] = [:]) throws -> String {
         try encode([
             "op": 6,
-            "d": [
-                "requestType": requestType,
-                "requestId": requestId,
-            ],
+            "d": ["requestType": requestType, "requestId": requestId, "requestData": requestData],
         ])
     }
 

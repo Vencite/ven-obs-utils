@@ -61,7 +61,7 @@ struct AppConfigMigrationTests {
         let url = dir.appendingPathComponent("config.json")
         let backupURL = url.appendingPathExtension("backup")
 
-        let currentJSON = #"{"config_version":1,"ontime":{"base_url":"https://ontime.example.com","break_cue_regex":"^BRK_\\d+$","request_timeout_seconds":3},"obs":{"host":"127.0.0.1","port":4455,"break_scene_regex":"^BREAK_.*$","reconnect_seconds":5},"automation":{"enter_break":true,"leave_break":true},"server":{"host":"127.0.0.1","port":8765},"safety":{"dry_run":true,"debounce_seconds":2}}"#
+        let currentJSON = #"{"config_version":2,"ontime":{"base_url":"https://ontime.example.com","break_cue_regex":"^BRK_\\d+$","request_timeout_seconds":3},"obs":{"host":"127.0.0.1","port":4455,"break_scene_regex":"^BREAK_.*$","reconnect_seconds":5},"automation":{"enter_break":true,"leave_break":true},"server":{"host":"127.0.0.1","port":8765},"safety":{"dry_run":true,"debounce_seconds":2}}"#
         let originalData = Data(currentJSON.utf8)
         try originalData.write(to: url)
 

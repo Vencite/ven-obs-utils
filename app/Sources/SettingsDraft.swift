@@ -43,6 +43,8 @@ struct SettingsDraft {
     var enterBreakEnabled: Bool
     var leaveBreakEnabled: Bool
     var dryRun: Bool
+    var mediaBridge: [String: Any]
+    var mediaControlToken = ""
 
     init(config: AppConfig, password: String) {
         obsHost = config.obsHost
@@ -56,6 +58,7 @@ struct SettingsDraft {
         enterBreakEnabled = config.enterBreakEnabled
         leaveBreakEnabled = config.leaveBreakEnabled
         dryRun = config.dryRun
+        mediaBridge = config.mediaBridge
     }
 
     func applying(to existing: AppConfig) throws -> (config: AppConfig, password: String) {
@@ -95,6 +98,9 @@ struct SettingsDraft {
             throw SettingsDraftError(field: .reconnectSeconds, message: "Reconnect interval must be greater than 0")
         }
 
+        if !mediaControlToken.isEmpty && mediaControlToken.utf8.count < 32 {
+            throw SettingsDraftError(field: .general, message: "Companion token must contain at least 32 bytes")
+        }
         var updated = existing
         updated.obsHost = trimmedHost
         updated.obsPort = parsedOBSPort
@@ -106,6 +112,7 @@ struct SettingsDraft {
         updated.enterBreakEnabled = enterBreakEnabled
         updated.leaveBreakEnabled = leaveBreakEnabled
         updated.dryRun = dryRun
+        updated.mediaBridge = mediaBridge
 
         do {
             _ = try updated.validated()

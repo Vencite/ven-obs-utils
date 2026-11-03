@@ -7,7 +7,35 @@ struct SettingsDraftTests {
         try testValidDraftUpdatesConfig()
         try testInvalidOBSPortIsFieldError()
         try testInvalidSceneRegexIsFieldError()
+        try testMediaConfigValidation()
         print("SettingsDraftTests: PASS")
+    }
+
+    static func testMediaConfigValidation() throws {
+        var config = try baseConfig()
+        config.mediaBridge = ["enabled": true, "source_mode": "follow_program",
+            "txt": ["enabled": false], "timer": ["media_timer_source": "off"]]
+        _ = try config.validated()
+        for invalid in ["{bad}", "{current_file!r}", "{remaining_hhmmss:02}", "{"] {
+            var bad = config
+            bad.mediaBridge["timer"] = ["secondary_message_template": invalid]
+            do { _ = try bad.validated(); throw SettingsDraftTestFailure("invalid template accepted") }
+            catch is ConfigValidationError { }
+        }
+        var draft = SettingsDraft(config: config, password: "secret")
+        draft.mediaBridge["source_mode"] = "explicit"
+        draft.mediaBridge["source_uuid"] = "stable-uuid"
+        let updated = try draft.applying(to: config)
+        assert(updated.config.mediaBridge["source_uuid"] as? String == "stable-uuid")
+        assert(updated.password == "secret")
+        var bad = config
+        bad.mediaBridge["enabled"] = "true"
+        do { _ = try bad.validated(); throw SettingsDraftTestFailure("string enabled accepted") }
+        catch is ConfigValidationError { }
+        bad = config
+        bad.serverHost = "::1"
+        do { _ = try bad.validated(); throw SettingsDraftTestFailure("unsupported IPv6 helper accepted") }
+        catch is ConfigValidationError { }
     }
 
     static func testSettingsUseTheConfigurationAlreadyLoadedAtStartup() throws {

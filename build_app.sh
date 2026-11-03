@@ -31,7 +31,7 @@ xcrun --sdk macosx swiftc \
   "${SWIFT_SOURCES[@]}" \
   -o "$CONTENTS/MacOS/$EXECUTABLE"
 
-cp "$ROOT/services/ontime_break_sync.py" "$CONTENTS/Resources/services/ontime_break_sync.py"
+cp "$ROOT"/services/*.py "$CONTENTS/Resources/services/"
 cp "$ROOT/config/config.example.json" "$CONTENTS/Resources/default-config.json"
 
 cat > "$CONTENTS/Info.plist" <<EOF

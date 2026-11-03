@@ -10,6 +10,8 @@ struct KeychainStore {
         account: "default"
     )
 
+    static let mediaControlToken = KeychainStore(service: "works.ven.obs-utils.media-control", account: "default")
+
     func read() throws -> String? {
         var query = baseQuery
         query[kSecReturnData as String] = true

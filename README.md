@@ -193,6 +193,14 @@ and opens it.
 
 Before starting the app, stop any older manually running copy of the helper if it is already using port `8765`.
 
+## MPS media bridge (develop)
+
+Develop test builds include an opt-in Media Playlist Source bridge for Ontime
+auxiliary countdowns, filename TXT export and local Companion HTTP controls.
+It is disabled by default and uses the existing OBS connection. See
+[setup, API and manual regression](MEDIA-BRIDGE.md). This does not mean the
+full macOS/OBS/Ontime/Companion workflow has passed manual acceptance.
+
 ## Configuration file
 
 The repository contains only an anonymized example:

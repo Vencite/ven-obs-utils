@@ -64,7 +64,7 @@ struct OBSConnectionStateMachine {
             }
             return [.transition(transition)]
 
-        case .ignored:
+        case .event, .ignored:
             return []
         }
     }

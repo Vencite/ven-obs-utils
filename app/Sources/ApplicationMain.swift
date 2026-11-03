@@ -4,103 +4,15 @@ import Foundation
 private let appName = "VEN OBS Utils"
 private let defaultPort = 8765
 
-private func shellQuote(_ value: String) -> String {
-    "'" + value.replacingOccurrences(of: "'", with: "'\\''") + "'"
-}
-
-final class ServiceController {
-    private(set) var process: Process?
-    private var shouldRun = true
-    private let serviceURL: URL
-    private let configURL: URL
-    private let logURL: URL
-    private let servicePort: Int
-    private let onFailure: (Int32) -> Void
-    private let onStaleHelperStopped: (Int32) -> Void
-
-    init(
-        serviceURL: URL,
-        configURL: URL,
-        logURL: URL,
-        servicePort: Int,
-        onFailure: @escaping (Int32) -> Void,
-        onStaleHelperStopped: @escaping (Int32) -> Void
-    ) {
-        self.serviceURL = serviceURL
-        self.configURL = configURL
-        self.logURL = logURL
-        self.servicePort = servicePort
-        self.onFailure = onFailure
-        self.onStaleHelperStopped = onStaleHelperStopped
-    }
-
-    func start() {
-        shouldRun = true
-        guard process?.isRunning != true else { return }
-
-        if let stalePID = StaleHelperCleanup.terminateManagedHelperListening(
-            on: servicePort,
-            configURL: configURL
-        ) {
-            onStaleHelperStopped(stalePID)
-        }
-
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/bin/zsh")
-        let command = "exec python3 \(shellQuote(serviceURL.path)) --config \(shellQuote(configURL.path)) >> \(shellQuote(logURL.path)) 2>&1"
-        process.arguments = ["-lc", command]
-        process.terminationHandler = { [weak self] process in
-            guard let self else { return }
-            DispatchQueue.main.async {
-                self.process = nil
-                if ServiceRestartPolicy.shouldRestart(
-                    shouldRun: self.shouldRun,
-                    terminationStatus: process.terminationStatus
-                ) {
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
-                        self.start()
-                    }
-                } else if self.shouldRun {
-                    self.onFailure(process.terminationStatus)
-                }
-            }
-        }
-
-        do {
-            try process.run()
-            self.process = process
-        } catch {
-            self.process = nil
-        }
-    }
-
-    func restart() {
-        shouldRun = false
-        if let process, process.isRunning {
-            process.terminate()
-        }
-        self.process = nil
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-            self.shouldRun = true
-            self.start()
-        }
-    }
-
-    func stop() {
-        shouldRun = false
-        if let process, process.isRunning {
-            process.terminate()
-        }
-        process = nil
-    }
-}
-
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private var statusItem: NSStatusItem!
     private var timer: Timer?
     private var service: ServiceController?
     private let obsClient = OBSWebSocketClient()
+    private lazy var mediaBridge = MediaBridgeController(obs: obsClient)
+    private let mediaIPCToken = UUID().uuidString + UUID().uuidString
+    private let mediaStatusItem = NSMenuItem(title: "Media: disabled", action: nil, keyEquivalent: "")
     private var settingsController: SettingsWindowController?
     private var currentConfig: AppConfig?
     private var automationRequests = AutomationRequestSequence()
@@ -171,6 +83,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         do {
             _ = try currentConfig?.validated()
+            configureMediaHelper()
             service?.start()
             configureOBS()
         } catch {
@@ -182,6 +95,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         timer = Timer.scheduledTimer(withTimeInterval: 2.0, repeats: true) { [weak self] _ in
             Task { @MainActor [weak self] in
                 self?.refreshStatus()
+                self?.mediaBridge.heartbeat()
             }
         }
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) { [weak self] in
@@ -206,7 +120,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         menu.addItem(header)
         menu.addItem(.separator())
 
-        for item in [serviceStatusItem, obsStatusItem, ontimeStatusItem, modeItem, programItem, ontimeEventItem, lastActionItem] {
+        for item in [serviceStatusItem, obsStatusItem, ontimeStatusItem, modeItem, programItem, ontimeEventItem, lastActionItem, mediaStatusItem] {
             item.isEnabled = false
             menu.addItem(item)
         }
@@ -225,6 +139,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func setupOBSCallbacks() {
+        mediaBridge.onState = { [weak self] state in
+            guard let self else { return }
+            if state["available"] as? Bool == true {
+                let file = state["current_file"] as? String ?? "—"
+                let current = Self.mediaTime(state["remaining_ms"])
+                let playlist = Self.mediaTime(state["playlist_remaining_ms"])
+                self.mediaStatusItem.title = "Media: \(state["source_name"] as? String ?? "MPS") · \(file) · current \(current) · playlist \(playlist)"
+            } else {
+                self.mediaStatusItem.title = "Media: \(state["reason"] as? String ?? "unavailable")"
+            }
+        }
+        obsClient.onEvent = { [weak self] type, data in self?.mediaBridge.receive(type: type, data: data) }
         obsClient.onStatusChange = { [weak self] status in
             guard let self else { return }
             switch status {
@@ -244,11 +170,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 self.obsStatusItem.title = "OBS: password required"
                 self.programItem.title = "Program: unavailable"
             }
+            self.mediaBridge.connectionChanged(status == .connected)
             self.updateBaseIcon()
         }
 
         obsClient.onProgramScene = { [weak self] scene in
             self?.programItem.title = "Program: \(scene)"
+            self?.mediaBridge.programChanged(scene)
         }
 
         obsClient.onTransition = { [weak self] transition in
@@ -273,6 +201,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if !FileManager.default.fileExists(atPath: logURL.path) {
             FileManager.default.createFile(atPath: logURL.path, contents: nil)
         }
+    }
+
+    private static func mediaTime(_ value: Any?) -> String {
+        guard let ms = MPSState.integer(value), ms >= 0 else { return "--:--" }
+        let seconds = ms / 1000
+        return String(format: "%02d:%02d:%02d", seconds / 3600, seconds / 60 % 60, seconds % 60)
+    }
+
+    private func configureMediaHelper() {
+        let token = (try? KeychainStore.mediaControlToken.read()) ?? ""
+        service?.environment = ["VEN_MEDIA_IPC_TOKEN": mediaIPCToken, "VEN_MEDIA_CONTROL_TOKEN": token]
+        guard let config = currentConfig else { return }
+        mediaBridge.configure(config.mediaBridge, port: config.serverPort, token: mediaIPCToken)
     }
 
     private func configureOBS() {
@@ -461,6 +402,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let mode = json["mode"] as? String ?? "unknown"
 
         serviceStatusItem.title = "Service: running"
+        if let media = json["media"] as? [String: Any], let action = media["last_ontime_action"] as? [String: Any] {
+            mediaStatusItem.toolTip = "Ontime media: \(action["status"] as? String ?? "unknown") \(action["path"] as? String ?? "")"
+        }
         modeItem.title = "Mode: " + (mode == "live" ? "LIVE" : "DRY RUN")
         ontimeConnected = ontime == "connected"
 
@@ -603,13 +547,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let applied = try draft.applying(to: existing)
         let keychain = KeychainStore.obsPassword
         let previousPassword = try keychain.read() ?? ""
+        let previousMediaToken = try KeychainStore.mediaControlToken.read() ?? ""
 
         do {
             try keychain.write(applied.password)
+            let controls = (applied.config.mediaBridge["http"] as? [String: Any])?["media_enabled"] as? Bool == true
+            let mediaToken = controls && draft.mediaControlToken.isEmpty ? UUID().uuidString + UUID().uuidString : draft.mediaControlToken
+            do { try KeychainStore.mediaControlToken.write(mediaToken) }
+            catch { try? keychain.write(previousPassword); throw error }
             do {
                 try applied.config.writeAtomically(to: configURL)
             } catch {
                 try? keychain.write(previousPassword)
+                try? KeychainStore.mediaControlToken.write(previousMediaToken)
                 throw error
             }
         } catch let error as SettingsDraftError {
@@ -621,6 +571,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         currentConfig = applied.config
         modeItem.title = applied.config.dryRun ? "Mode: DRY RUN" : "Mode: LIVE"
         serviceStatusItem.title = "Service: restarting…"
+        configureMediaHelper()
         service?.restart()
         configureOBS()
         appendLog("settings saved service_restart=true obs_reconnect=true")
@@ -647,7 +598,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             currentConfig = config
             let password = try KeychainStore.obsPassword.read() ?? ""
             appendLog("settings keychain read ok")
-            let draft = SettingsDraft(config: config, password: password)
+            var draft = SettingsDraft(config: config, password: password)
+            draft.mediaControlToken = try KeychainStore.mediaControlToken.read() ?? ""
             // A timer in the default run-loop mode fires only after AppKit has
             // exited the status-menu tracking loop. Dispatching straight back
             // to the main queue can still run while that loop owns the menu.

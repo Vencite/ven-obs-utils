@@ -88,6 +88,16 @@ jobs:
             app/Tests/ServiceRestartPolicyTests.swift \
             -o /tmp/service-restart-policy-tests
           /tmp/service-restart-policy-tests
+      - name: Run service restart lifecycle test
+        timeout-minutes: 2
+        run: |
+          xcrun --sdk macosx swiftc -parse-as-library \
+            app/Sources/ServiceController.swift \
+            app/Sources/StaleHelperCleanup.swift \
+            app/Sources/ServiceRestartPolicy.swift \
+            app/Tests/ServiceControllerTests.swift \
+            -o /tmp/service-controller-tests
+          /tmp/service-controller-tests
       - name: Run stale helper cleanup tests
         run: |
           xcrun --sdk macosx swiftc \
@@ -102,6 +112,13 @@ jobs:
             app/Tests/StatusPresentationTests.swift \
             -o /tmp/status-presentation-tests
           /tmp/status-presentation-tests
+      - name: Run MPS state and selection tests
+        run: |
+          xcrun --sdk macosx swiftc -parse-as-library \
+            app/Sources/MPSState.swift \
+            app/Tests/MPSStateTests.swift \
+            -o /tmp/mps-state-tests
+          /tmp/mps-state-tests
       - name: Build macOS app
         run: ./build_app.sh
       - name: Package develop test build

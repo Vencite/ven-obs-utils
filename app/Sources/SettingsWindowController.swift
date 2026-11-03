@@ -19,6 +19,21 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
     private let enterBreakCheckbox = NSButton(checkboxWithTitle: "Jump to next Ontime break when entering a break scene", target: nil, action: nil)
     private let leaveBreakCheckbox = NSButton(checkboxWithTitle: "Advance Ontime when leaving a break scene", target: nil, action: nil)
     private let dryRunCheckbox = NSButton(checkboxWithTitle: "Dry run - never start Ontime events", target: nil, action: nil)
+    private let mediaEnabled = NSButton(checkboxWithTitle: "Enable MPS media bridge", target: nil, action: nil)
+    private let followProgram = NSButton(checkboxWithTitle: "Follow the single visible MPS in Program (including nested scenes)", target: nil, action: nil)
+    private let mediaUUID = NSTextField()
+    private let mediaName = NSTextField()
+    private let txtEnabled = NSButton(checkboxWithTitle: "Export current filename to UTF-8 TXT", target: nil, action: nil)
+    private let txtPath = NSTextField()
+    private let txtKeep = NSButton(checkboxWithTitle: "Keep last TXT filename when inactive", target: nil, action: nil)
+    private let timerSource = NSPopUpButton()
+    private let timerOutput = NSPopUpButton()
+    private let auxIndex = NSTextField()
+    private let inactiveKeep = NSButton(checkboxWithTitle: "Pause and keep last auxiliary timer when inactive", target: nil, action: nil)
+    private let secondaryTemplate = NSTextField()
+    private let selectSecondary = NSButton(checkboxWithTitle: "Change Ontime Stage Timer secondary display to this output", target: nil, action: nil)
+    private let mediaHTTP = NSButton(checkboxWithTitle: "Enable Companion media controls on localhost", target: nil, action: nil)
+    private let mediaToken = NSTextField()
     private let generalErrorLabel = NSTextField(labelWithString: "")
     private var errorLabels: [SettingsDraftField: NSTextField] = [:]
 
@@ -109,6 +124,29 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         form.addArrangedSubview(leaveBreakCheckbox)
         form.addArrangedSubview(dryRunCheckbox)
 
+        form.addArrangedSubview(separator())
+        form.addArrangedSubview(sectionHeader("Media Playlist Source"))
+        form.addArrangedSubview(mediaEnabled)
+        form.addArrangedSubview(followProgram)
+        form.addArrangedSubview(fieldRow(label: "Source UUID", field: mediaUUID, key: .general))
+        form.addArrangedSubview(fieldRow(label: "Name fallback", field: mediaName, key: .general))
+        form.addArrangedSubview(txtEnabled)
+        form.addArrangedSubview(fieldRow(label: "TXT path", field: txtPath, key: .general))
+        form.addArrangedSubview(txtKeep)
+        timerSource.addItems(withTitles: ["off", "current_item", "playlist"])
+        timerOutput.addItems(withTitles: ["auxiliary_timer", "secondary_message"])
+        let timerRow = NSStackView(views: [NSTextField(labelWithString: "Ontime media timer"), timerSource, timerOutput])
+        timerRow.spacing = 10
+        form.addArrangedSubview(timerRow)
+        form.addArrangedSubview(NSTextField(wrappingLabelWithString: "Reserve the selected auxiliary timer for MPS. The main rundown is never controlled by media playback. Dry run applies to every media action in Ontime."))
+        form.addArrangedSubview(fieldRow(label: "Auxiliary slot (1–3)", field: auxIndex, key: .general))
+        form.addArrangedSubview(inactiveKeep)
+        form.addArrangedSubview(fieldRow(label: "Message template", field: secondaryTemplate, key: .general))
+        form.addArrangedSubview(selectSecondary)
+        form.addArrangedSubview(mediaHTTP)
+        mediaToken.placeholderString = "Generated on save; reopen Settings to copy"
+        form.addArrangedSubview(fieldRow(label: "Companion token", field: mediaToken, key: .general))
+        form.addArrangedSubview(NSTextField(wrappingLabelWithString: "Token is stored in Keychain. Media HTTP is localhost only. Source UUID/name apply when Follow Program is off. Unknown times remain --:--."))
         form.addArrangedSubview(separator())
         form.addArrangedSubview(sectionHeader("Advanced"))
         form.addArrangedSubview(fieldRow(label: "Local service port", field: serverPortField, key: .serverPort))
@@ -236,6 +274,24 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         enterBreakCheckbox.state = draft.enterBreakEnabled ? .on : .off
         leaveBreakCheckbox.state = draft.leaveBreakEnabled ? .on : .off
         dryRunCheckbox.state = draft.dryRun ? .on : .off
+        let media = draft.mediaBridge
+        mediaEnabled.state = media["enabled"] as? Bool == true ? .on : .off
+        followProgram.state = media["source_mode"] as? String != "explicit" ? .on : .off
+        mediaUUID.stringValue = media["source_uuid"] as? String ?? ""
+        mediaName.stringValue = media["source_name"] as? String ?? ""
+        let txt = media["txt"] as? [String: Any] ?? [:]
+        txtEnabled.state = txt["enabled"] as? Bool == true ? .on : .off
+        txtPath.stringValue = txt["path"] as? String ?? ""
+        txtKeep.state = txt["clear_policy"] as? String == "keep_last" ? .on : .off
+        let timer = media["timer"] as? [String: Any] ?? [:]
+        timerSource.selectItem(withTitle: timer["media_timer_source"] as? String ?? "off")
+        timerOutput.selectItem(withTitle: timer["ontime_output"] as? String ?? "auxiliary_timer")
+        auxIndex.stringValue = String(timer["aux_timer_index"] as? Int ?? 1)
+        inactiveKeep.state = timer["inactive_policy"] as? String == "keep_last" ? .on : .off
+        secondaryTemplate.stringValue = timer["secondary_message_template"] as? String ?? "{current_file} · {playlist_remaining_hhmmss}"
+        selectSecondary.state = timer["change_stage_timer_secondary_source"] as? Bool == true ? .on : .off
+        mediaHTTP.state = (media["http"] as? [String: Any])?["media_enabled"] as? Bool == true ? .on : .off
+        mediaToken.stringValue = draft.mediaControlToken
     }
 
     private func makeDraft() -> SettingsDraft {
@@ -251,6 +307,29 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         draft.enterBreakEnabled = enterBreakCheckbox.state == .on
         draft.leaveBreakEnabled = leaveBreakCheckbox.state == .on
         draft.dryRun = dryRunCheckbox.state == .on
+        var media = draft.mediaBridge
+        media["enabled"] = mediaEnabled.state == .on
+        media["source_mode"] = followProgram.state == .on ? "follow_program" : "explicit"
+        media["source_uuid"] = mediaUUID.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        media["source_name"] = mediaName.stringValue
+        var txt = media["txt"] as? [String: Any] ?? [:]
+        txt["enabled"] = txtEnabled.state == .on
+        txt["path"] = txtPath.stringValue
+        txt["clear_policy"] = txtKeep.state == .on ? "keep_last" : "clear_when_inactive"
+        media["txt"] = txt
+        var timer = media["timer"] as? [String: Any] ?? [:]
+        timer["media_timer_source"] = timerSource.titleOfSelectedItem ?? "off"
+        timer["ontime_output"] = timerOutput.titleOfSelectedItem ?? "auxiliary_timer"
+        timer["aux_timer_index"] = Int(auxIndex.stringValue) ?? 0
+        timer["inactive_policy"] = inactiveKeep.state == .on ? "keep_last" : "stop"
+        timer["secondary_message_template"] = secondaryTemplate.stringValue
+        timer["change_stage_timer_secondary_source"] = selectSecondary.state == .on
+        media["timer"] = timer
+        var http = media["http"] as? [String: Any] ?? [:]
+        http["media_enabled"] = mediaHTTP.state == .on
+        media["http"] = http
+        draft.mediaBridge = media
+        draft.mediaControlToken = mediaToken.stringValue
         return draft
     }
 

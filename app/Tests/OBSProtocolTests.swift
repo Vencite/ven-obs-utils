@@ -10,6 +10,7 @@ struct OBSProtocolTests {
         try testPreviewSceneEventIsIgnored()
         try testCurrentProgramSceneResponse()
         try testRequestMessage()
+        try testVendorMessages()
         print("OBSProtocolTests: PASS")
     }
 
@@ -93,6 +94,23 @@ struct OBSProtocolTests {
               data["requestType"] as? String == "GetCurrentProgramScene",
               data["requestId"] as? String == "baseline" else {
             throw OBSProtocolTestFailure("request JSON mismatch")
+        }
+    }
+
+    static func testVendorMessages() throws {
+        let text = try OBSProtocolCodec.requestJSON(requestType: "CallVendorRequest", requestId: "mps",
+            requestData: ["vendorName": "media-playlist-source", "requestType": "GetPlaylistState",
+                          "requestData": ["source_uuid": "uuid"]])
+        let root = try jsonObject(text)
+        let data = root["d"] as! [String: Any]
+        let request = data["requestData"] as! [String: Any]
+        assert((request["requestData"] as? [String: String])?["source_uuid"] == "uuid")
+        let identify = try jsonObject(OBSProtocolCodec.identifyJSON(rpcVersion: 1, authentication: nil))
+        assert(((identify["d"] as! [String: Any])["eventSubscriptions"] as! Int) & 512 != 0)
+        let event = #"{"op":5,"d":{"eventType":"VendorEvent","eventData":{"vendorName":"media-playlist-source","eventType":"PlaylistStateChanged","eventData":{"schema_version":1}}}}"#
+        guard case .event(let type, let envelope) = try OBSProtocolCodec.parse(event),
+              type == "VendorEvent", envelope["vendorName"] as? String == "media-playlist-source" else {
+            throw OBSProtocolTestFailure("VendorEvent envelope lost")
         }
     }
 

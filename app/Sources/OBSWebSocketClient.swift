@@ -61,6 +61,7 @@ final class OBSWebSocketClient {
     var onStatusChange: ((OBSConnectionStatus) -> Void)?
     var onProgramScene: ((String) -> Void)?
     var onTransition: ((ProgramSceneTransition) -> Void)?
+    var onEvent: ((String, [String: Any]) -> Void)?
     var onError: ((String) -> Void)?
 
     private var settings: OBSWebSocketSettings?
@@ -70,6 +71,31 @@ final class OBSWebSocketClient {
     private var stateMachine = OBSConnectionStateMachine()
     private var generation = 0
     private var shouldRun = false
+    private var requests: [String: (String, CheckedContinuation<[String: Any], Error>, Task<Void, Never>)] = [:]
+
+    func request(_ type: String, data: [String: Any] = [:]) async throws -> [String: Any] {
+        guard socket != nil, shouldRun else { throw OBSProtocolError.invalidMessage("OBS disconnected") }
+        let id = "media-\(UUID().uuidString)"
+        let text = try OBSProtocolCodec.requestJSON(requestType: type, requestId: id, requestData: data)
+        return try await withCheckedThrowingContinuation { continuation in
+            let timeout = Task { [weak self] in
+                do { try await Task.sleep(nanoseconds: 5_000_000_000) } catch { return }
+                guard let item = self?.requests.removeValue(forKey: id) else { return }
+                item.1.resume(throwing: OBSProtocolError.invalidMessage("OBS request timed out: \(type)"))
+            }
+            requests[id] = (type, continuation, timeout)
+            send(text, generation: generation)
+        }
+    }
+
+    private func failRequests() {
+        let pending = requests
+        requests.removeAll()
+        for item in pending.values {
+            item.2.cancel()
+            item.1.resume(throwing: OBSProtocolError.invalidMessage("OBS disconnected"))
+        }
+    }
 
     func start(settings: OBSWebSocketSettings) {
         stop()
@@ -87,6 +113,7 @@ final class OBSWebSocketClient {
         receiveTask = nil
         socket?.cancel(with: .goingAway, reason: nil)
         socket = nil
+        failRequests()
         stateMachine.resetForReconnect()
         onStatusChange?(.disconnected)
     }
@@ -99,6 +126,7 @@ final class OBSWebSocketClient {
         receiveTask = nil
         socket?.cancel(with: .goingAway, reason: nil)
         socket = nil
+        failRequests()
         stateMachine.resetForReconnect()
 
         let url: URL
@@ -152,6 +180,13 @@ final class OBSWebSocketClient {
     private func handleMessage(_ text: String, generation: Int) throws {
         guard self.generation == generation, let settings else { return }
         let message = try OBSProtocolCodec.parse(text)
+        if case .requestResponse(let type, let id, let success, let data) = message,
+           let item = requests.removeValue(forKey: id) {
+            item.2.cancel()
+            if success && type == item.0 { item.1.resume(returning: data) }
+            else { item.1.resume(throwing: OBSProtocolError.invalidMessage("OBS request failed: \(type)")) }
+        }
+        if case .event(let type, let data) = message { onEvent?(type, data) }
         let commands = try stateMachine.handle(
             message,
             password: settings.password,
@@ -229,6 +264,7 @@ final class OBSWebSocketClient {
         receiveTask = nil
         socket?.cancel(with: .goingAway, reason: nil)
         socket = nil
+        failRequests()
         stateMachine.resetForReconnect()
         onStatusChange?(.disconnected)
         onError?(message)
