@@ -9,3 +9,5 @@ config/config.json
 # Documentation and agent planning files stay local.
 docs/
 .superpowers/
+/AGENTS.md
+/LOCAL-TESTING.md
