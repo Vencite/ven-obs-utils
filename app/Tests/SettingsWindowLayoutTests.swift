@@ -52,8 +52,17 @@ struct SettingsWindowLayoutTests {
         func snapshot(_ name: String) throws {
             view.layoutSubtreeIfNeeded()
             window.displayIfNeeded()
-            guard let bitmap = view.bitmapImageRepForCachingDisplay(in: view.bounds) else { fatalError("Cannot capture settings") }
-            view.cacheDisplay(in: view.bounds, to: bitmap)
+            let tabs = views.compactMap { $0 as? NSTabView }.first!
+            let scroll = tabs.selectedTabViewItem!.view as! NSScrollView
+            let document = scroll.documentView!
+            document.layoutSubtreeIfNeeded()
+            let image = NSImage(size: document.bounds.size)
+            image.lockFocus()
+            NSColor.windowBackgroundColor.setFill()
+            document.bounds.fill()
+            document.displayIgnoringOpacity(document.bounds, in: NSGraphicsContext.current!)
+            image.unlockFocus()
+            let bitmap = NSBitmapImageRep(data: image.tiffRepresentation!)!
             let folder = URL(fileURLWithPath: "/tmp/vos-ui-screenshots", isDirectory: true)
             try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
             try bitmap.representation(using: .png, properties: [:])!.write(to: folder.appendingPathComponent(name))
