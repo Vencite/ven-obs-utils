@@ -6,7 +6,33 @@ struct AppConfigMigrationTests {
         try testLegacyConfigIsMigratedWithBackup()
         try testCurrentConfigIsLeftUntouched()
         try testLoadAutomaticallyMigratesLegacyConfig()
+        try testVersionTwoMediaConfigPreservesOutputs()
         print("AppConfigMigrationTests: PASS")
+    }
+
+    static func testVersionTwoMediaConfigPreservesOutputs() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let path = directory.appendingPathComponent("config.json")
+        let old: [String: Any] = ["config_version": 2, "ontime": ["base_url": "https://ontime.example.com"],
+            "obs": ["host": "192.168.1.3"], "safety": ["dry_run": false],
+            "media_bridge": ["enabled": true, "source_mode": "explicit", "source_uuid": "saved-uuid",
+                "txt": ["enabled": true, "path": "/tmp/current-media.txt"],
+                "timer": ["media_timer_source": "playlist", "aux_timer_index": 2],
+                "http": ["media_enabled": true]], "custom": "retained"]
+        let original = try JSONSerialization.data(withJSONObject: old)
+        try original.write(to: path)
+        let config = try AppConfig.load(from: path)
+        assert(config.obsHost == "192.168.1.3" && !config.dryRun)
+        assert(config.mediaBridge["source_uuid"] as? String == "saved-uuid")
+        assert((config.mediaBridge["timer"] as? [String: Any])?["aux_timer_index"] as? Int == 2)
+        assert((config.mediaBridge["txt"] as? [String: Any])?["path"] as? String == "/tmp/current-media.txt")
+        assert(config.mediaBridge["http"] == nil)
+        let saved = try JSONSerialization.jsonObject(with: Data(contentsOf: path)) as! [String: Any]
+        assert(saved["custom"] as? String == "retained")
+        let backup = try Data(contentsOf: path.appendingPathExtension("backup"))
+        assert(backup == original)
     }
 
     static func testLegacyConfigIsMigratedWithBackup() throws {
@@ -61,7 +87,7 @@ struct AppConfigMigrationTests {
         let url = dir.appendingPathComponent("config.json")
         let backupURL = url.appendingPathExtension("backup")
 
-        let currentJSON = #"{"config_version":2,"ontime":{"base_url":"https://ontime.example.com","break_cue_regex":"^BRK_\\d+$","request_timeout_seconds":3},"obs":{"host":"127.0.0.1","port":4455,"break_scene_regex":"^BREAK_.*$","reconnect_seconds":5},"automation":{"enter_break":true,"leave_break":true},"server":{"host":"127.0.0.1","port":8765},"safety":{"dry_run":true,"debounce_seconds":2}}"#
+        let currentJSON = #"{"config_version":3,"ontime":{"base_url":"https://ontime.example.com","break_cue_regex":"^BRK_\\d+$","request_timeout_seconds":3},"obs":{"host":"127.0.0.1","port":4455,"break_scene_regex":"^BREAK_.*$","reconnect_seconds":5},"automation":{"enter_break":true,"leave_break":true},"server":{"host":"127.0.0.1","port":8765},"safety":{"dry_run":true,"debounce_seconds":2}}"#
         let originalData = Data(currentJSON.utf8)
         try originalData.write(to: url)
 

@@ -6,7 +6,8 @@ import threading
 import time
 import unittest
 from pathlib import Path
-from urllib.parse import unquote
+from urllib.parse import parse_qs, unquote, urlsplit
+from urllib.error import HTTPError
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "services"))
 from media_bridge import MediaBridge, unavailable, validate_snapshot
@@ -29,6 +30,7 @@ class FakeOntime:
         self.calls = []
         self.timer = {"current": 0, "duration": 0, "playback": "stop", "direction": "count-down"}
         self.message = None
+        self.secondary_source = None
         self.fail = None
 
     def __call__(self, path):
@@ -37,7 +39,11 @@ class FakeOntime:
             raise OSError("request_failed")
         if path == "/api/poll":
             return {"payload": {"auxtimer1": copy.deepcopy(self.timer)}}
-        if path.startswith("/api/message/secondary/"):
+        if path.startswith("/api/message/timer?"):
+            source = parse_qs(urlsplit(path).query).get("secondarySource", [None])[0]
+            # Ontime v4.14.0 message.utils.ts coerceSecondary().
+            self.secondary_source = source if source in {"aux1", "aux2", "aux3", "secondary"} else None
+        elif path.startswith("/api/message/secondary/"):
             self.message = unquote(path.removeprefix("/api/message/secondary/"))
         elif path.startswith("/api/auxtimer/1/"):
             action = path.removeprefix("/api/auxtimer/1/")
@@ -54,8 +60,7 @@ class FakeOntime:
 class MediaBridgeTests(unittest.TestCase):
     def setUp(self):
         self.ontime = FakeOntime()
-        self.config = {"enabled": True, "timer": {"media_timer_source": "playlist"},
-                       "http": {"media_enabled": True}}
+        self.config = {"enabled": True, "timer": {"media_timer_source": "playlist"}}
         self.bridge = MediaBridge(self.config, False, self.ontime)
         self.bridge.reset_session("first")
         self.sequence = 0
@@ -171,12 +176,10 @@ class MediaBridgeTests(unittest.TestCase):
         self.ingest(unavailable("disconnected"))
         self.assertEqual(self.ontime.calls, ["/api/auxtimer/1/pause"])
 
-    def test_stale_state_invalidates_controls_and_stops_timer(self):
+    def test_stale_state_stops_timer(self):
         self.ingest()
-        self.bridge.request_control("next")
         self.bridge._received = time.monotonic() - 7
         self.assertEqual(self.bridge.status()["reason"], "stale_telemetry")
-        self.assertEqual(self.bridge.take_controls(), [])
         self.bridge.process_outputs()
         self.assertEqual(self.ontime.calls[-1], "/api/auxtimer/1/stop")
 
@@ -198,28 +201,7 @@ class MediaBridgeTests(unittest.TestCase):
         bridge.close()
         self.assertEqual(self.ontime.calls, [])
 
-    def test_controls_are_opt_in_bounded_and_not_replayed(self):
-        self.assertEqual(self.bridge.request_control("next")["reason"], "source_unavailable")
-        self.ingest()
-        result = self.bridge.request_control("next")
-        commands = self.bridge.take_controls()
-        self.assertEqual(commands[0]["id"], result["id"])
-        self.assertEqual(commands[0]["source_uuid"], "source-1")
-        self.assertEqual(self.bridge.take_controls(), [])
-        self.assertEqual(self.bridge.complete_control(result["id"], {"status": "success"})["status"], "success")
-        for _ in range(16):
-            self.assertEqual(self.bridge.request_control("pause")["status"], "queued")
-        self.assertEqual(self.bridge.request_control("pause")["reason"], "control_queue_full")
-        with self.assertRaises(ValueError):
-            self.bridge.request_control("toggle")
-        self.bridge.config["http"]["media_enabled"] = False
-        self.assertEqual(self.bridge.request_control("play")["reason"], "controls_disabled")
 
-    def test_source_change_cancels_queued_controls(self):
-        self.ingest()
-        self.bridge.request_control("next")
-        self.ingest(snapshot(source_uuid="source-2"))
-        self.assertEqual(self.bridge.take_controls(), [])
 
     def test_txt_atomic_unicode_dedup_and_clear(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -325,7 +307,7 @@ class MediaBridgeTests(unittest.TestCase):
     def test_malformed_config_cannot_enable_any_outputs(self):
         for value in (None, [], "yes", {"enabled": "false"}, {"enabled": 1},
                       {"enabled": True, "timer": []}, {"enabled": True, "txt": "yes"},
-                      {"http": {"media_enabled": "false"}}, {"json": {"enabled": 1}},
+                      {"json": {"enabled": 1}},
                       {"timer": {"aux_timer_index": True}},
                       {"timer": {"media_timer_source": "guessed"}},
                       {"txt": {"enabled": True, "path": "relative"}}):
@@ -387,7 +369,8 @@ class MediaBridgeTests(unittest.TestCase):
         self.ingest(unavailable("disconnected"))
         state = self.bridge.status()
         self.assertEqual(state["output_error"], "ontime_request_failed")
-        self.assertEqual(state["last_ontime_action"]["path"], "/api/auxtimer/1/start")
+        self.assertEqual(state["last_ontime_action"]["path"], "/api/auxtimer/1/stop")
+        self.assertEqual(state["last_ontime_action"]["status"], "error")
         self.assertEqual(self.ontime.timer["playback"], "start")
         self.ontime.fail = None
         self.ontime.calls.clear()
@@ -449,6 +432,83 @@ class MediaBridgeTests(unittest.TestCase):
         self.ontime.calls.clear()
         self.ingest()
         self.assertEqual(self.ontime.calls, ["/api/poll"])
+
+    def test_v414_stage_timer_selects_named_aux_slot(self):
+        self.bridge.config["timer"]["change_stage_timer_secondary_source"] = True
+        self.ingest()
+        self.assertEqual(self.ontime.timer["playback"], "start")
+        self.assertEqual(self.ontime.secondary_source, "aux1")
+
+    def test_v414_fractional_aux_current_is_valid_numeric_runtime(self):
+        # v4 numberOrError uses Number(), setTime accepts fractional milliseconds,
+        # and Date.now() subtraction preserves the fractional part in current.
+        self.ontime.timer["current"] = 300000.5
+        self.ingest()
+        self.assertNotIn("output_error", self.bridge.status())
+        self.assertEqual(self.ontime.timer["playback"], "start")
+
+    def test_aux_current_rejects_boolean_and_nonfinite_values(self):
+        for value in (True, False, "300000", None, float("nan"), float("inf"), float("-inf")):
+            with self.subTest(value=value):
+                bridge = MediaBridge(self.config, False, self.ontime)
+                bridge.reset_session("s")
+                self.ontime.timer["current"] = value
+                bridge.ingest({"session": "s", "sequence": 1, "snapshot": snapshot()})
+                bridge.process_outputs()
+                self.assertEqual(bridge.status()["output_error"], "aux_timer_unavailable")
+
+    def test_http_failure_reports_safe_endpoint_and_status(self):
+        def denied(path):
+            raise HTTPError("https://private.example/secret", 403, "Forbidden", None, None)
+
+        bridge = MediaBridge(self.config, False, denied)
+        bridge.reset_session("s")
+        bridge.ingest({"session": "s", "sequence": 1, "snapshot": snapshot()})
+        bridge.process_outputs()
+        state = bridge.status()
+        self.assertEqual(state["output_error"], "ontime_http_403")
+        self.assertEqual(state["output_status"], "error")
+        self.assertEqual(state["last_ontime_request"],
+                         {"status": "error", "path": "/api/poll", "reason": "http_error", "http_status": 403})
+        self.assertNotIn("private.example", json.dumps(state))
+
+    def test_output_status_explains_off_unknown_and_success(self):
+        self.bridge.config["timer"]["media_timer_source"] = "off"
+        self.ingest()
+        self.assertEqual(self.bridge.status()["output_status"], "off")
+        self.assertEqual(self.ontime.calls, [])
+        self.bridge.config["timer"]["media_timer_source"] = "playlist"
+        value = snapshot(playlist_remaining_known=False)
+        del value["playlist_remaining_ms"]
+        self.ingest(value)
+        self.assertEqual(self.bridge.status()["output_status"], "unknown_remaining")
+        self.ingest()
+        self.assertEqual(self.bridge.status()["output_status"], "synced")
+        self.assertEqual(self.bridge.status()["last_ontime_request"]["path"], "/api/auxtimer/1/start")
+
+    def test_secondary_message_keeps_known_filename_with_unknown_times(self):
+        self.bridge.config["timer"].update({"ontime_output": "secondary_message",
+            "secondary_message_template": "{current_file} · {remaining_hhmmss} · {playlist_remaining_hhmmss}"})
+        value = snapshot(remaining_known=False, playlist_remaining_known=False)
+        del value["remaining_ms"]
+        del value["playlist_remaining_ms"]
+        self.ingest(value)
+        self.assertEqual(self.ontime.message, "żółć.mp4 · --:-- · --:--")
+        self.assertEqual(self.bridge.status()["output_status"], "synced")
+        self.assertNotIn("/api/poll", self.ontime.calls)
+
+    def test_secondary_clear_is_immediate_on_invalidation_and_shutdown(self):
+        self.bridge.config["timer"].update({"ontime_output": "secondary_message",
+                                          "secondary_message_template": "{current_file}"})
+        self.ingest()
+        self.assertEqual(self.ontime.message, "żółć.mp4")
+        self.ingest(unavailable("disconnected"))
+        self.assertEqual(self.ontime.message, "")
+        self.bridge._message_sent_at -= 2
+        self.ingest()
+        self.assertEqual(self.ontime.message, "żółć.mp4")
+        self.bridge.close()
+        self.assertEqual(self.ontime.message, "")
 
     def test_disabled_bridge_does_nothing(self):
         bridge = MediaBridge({"enabled": False}, False, self.ontime)

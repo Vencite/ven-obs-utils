@@ -55,6 +55,8 @@ final class MediaBridgeController {
         guard type == "VendorEvent" else {
             let mode = config["source_mode"] as? String ?? "follow_program"
             if type == "InputRemoved" || type == "InputNameChanged" || type == "InputCreated" {
+                if mode == "follow_program", type == "InputNameChanged",
+                   let old = data["oldInputName"] as? String, observedScenes.contains(old) { refresh(); return }
                 if let uuid = data["inputUuid"] as? String, uuid == selectedUUID { refresh() }
                 else if mode == "explicit", selectedUUID == nil {
                     let configuredUUID = config["source_uuid"] as? String ?? ""
@@ -214,14 +216,7 @@ final class MediaBridgeController {
                     _ = try await ipc("/media/_snapshot", body: ["session": currentSession, "sequence": sequence, "snapshot": snapshot])
                     guard epoch == deliveryEpoch, currentSession == session else { return }
                 } while dirty
-                let data = try await ipc("/media/_controls")
-                guard epoch == deliveryEpoch else { return }
-                if let actions = data["controls"] as? [[String: Any]] {
-                    for action in actions {
-                        guard epoch == deliveryEpoch else { return }
-                        await control(action)
-                    }
-                }
+
             } catch {
                 guard epoch == deliveryEpoch else { return }
                 helperReady = false
@@ -229,28 +224,6 @@ final class MediaBridgeController {
                 onState?(snapshot)
             }
         }
-    }
-
-    private func control(_ command: [String: Any]) async {
-        guard let id = command["id"] as? String else { return }
-        let currentGeneration = generation
-        var result: [String: Any] = ["status": "ignored", "reason": "stale_source"]
-        if command["session"] as? String == session,
-           let uuid = selectedUUID, uuid == command["source_uuid"] as? String,
-           snapshot["available"] as? Bool == true, connected,
-           let action = command["action"] as? String {
-            let actions = ["play": "OBS_WEBSOCKET_MEDIA_INPUT_ACTION_PLAY", "pause": "OBS_WEBSOCKET_MEDIA_INPUT_ACTION_PAUSE",
-                "next": "OBS_WEBSOCKET_MEDIA_INPUT_ACTION_NEXT", "previous": "OBS_WEBSOCKET_MEDIA_INPUT_ACTION_PREVIOUS",
-                "restart": "OBS_WEBSOCKET_MEDIA_INPUT_ACTION_RESTART", "stop": "OBS_WEBSOCKET_MEDIA_INPUT_ACTION_STOP"]
-            if let mediaAction = actions[action] {
-                do {
-                    _ = try await obs.request("TriggerMediaInputAction", data: ["inputUuid": uuid, "mediaAction": mediaAction])
-                    result = ["status": "success"]
-                } catch { result = ["status": "error", "reason": error.localizedDescription] }
-            }
-        }
-        if generation != currentGeneration { result = ["status": "error", "reason": "source_changed_during_action"] }
-        _ = try? await ipc("/media/_control-result", body: ["id": id, "result": result])
     }
 
     private func ipc(_ path: String, body: [String: Any]? = nil) async throws -> [String: Any] {

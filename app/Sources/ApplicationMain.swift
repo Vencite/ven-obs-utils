@@ -12,6 +12,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let obsClient = OBSWebSocketClient()
     private lazy var mediaBridge = MediaBridgeController(obs: obsClient)
     private let mediaIPCToken = UUID().uuidString + UUID().uuidString
+    private var latestMediaState: [String: Any] = [:]
+    private var latestMediaOutput: [String: Any] = [:]
+    private let mediaFileItem = NSMenuItem(title: "Playing: —", action: nil, keyEquivalent: "")
+    private let mediaTimeItem = NSMenuItem(title: "Remaining: —", action: nil, keyEquivalent: "")
+    private let mediaOutputItem = NSMenuItem(title: "Media output: off", action: nil, keyEquivalent: "")
     private let mediaStatusItem = NSMenuItem(title: "Media: disabled", action: nil, keyEquivalent: "")
     private var settingsController: SettingsWindowController?
     private var currentConfig: AppConfig?
@@ -120,7 +125,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         menu.addItem(header)
         menu.addItem(.separator())
 
-        for item in [serviceStatusItem, obsStatusItem, ontimeStatusItem, modeItem, programItem, ontimeEventItem, lastActionItem, mediaStatusItem] {
+        for item in [serviceStatusItem, obsStatusItem, ontimeStatusItem, modeItem, programItem, ontimeEventItem, lastActionItem, mediaStatusItem, mediaFileItem, mediaTimeItem, mediaOutputItem] {
             item.isEnabled = false
             menu.addItem(item)
         }
@@ -140,15 +145,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func setupOBSCallbacks() {
         mediaBridge.onState = { [weak self] state in
-            guard let self else { return }
-            if state["available"] as? Bool == true {
-                let file = state["current_file"] as? String ?? "—"
-                let current = Self.mediaTime(state["remaining_ms"])
-                let playlist = Self.mediaTime(state["playlist_remaining_ms"])
-                self.mediaStatusItem.title = "Media: \(state["source_name"] as? String ?? "MPS") · \(file) · current \(current) · playlist \(playlist)"
-            } else {
-                self.mediaStatusItem.title = "Media: \(state["reason"] as? String ?? "unavailable")"
-            }
+            self?.latestMediaState = state
+            self?.updateMediaPresentation()
         }
         obsClient.onEvent = { [weak self] type, data in self?.mediaBridge.receive(type: type, data: data) }
         obsClient.onStatusChange = { [weak self] status in
@@ -203,6 +201,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
+    private func updateMediaPresentation() {
+        let state = latestMediaState
+        if state["available"] as? Bool == true {
+            mediaStatusItem.title = "Playlist: \(state["source_name"] as? String ?? "MPS")"
+            mediaFileItem.title = "Playing: \(state["current_file"] as? String ?? "—")"
+            mediaTimeItem.title = "Remaining: file \(Self.mediaTime(state["remaining_ms"])) · playlist \(Self.mediaTime(state["playlist_remaining_ms"]))"
+        } else {
+            mediaStatusItem.title = "Playlist: \(state["reason"] as? String ?? "waiting for OBS")"
+            mediaFileItem.title = "Playing: —"
+            mediaTimeItem.title = "Remaining: —"
+        }
+        let output = MediaOutputPresentation.summary(latestMediaOutput)
+        mediaOutputItem.title = "Media output: " + output
+        settingsController?.updateMediaStatus(state, output: output)
+    }
+
     private static func mediaTime(_ value: Any?) -> String {
         guard let ms = MPSState.integer(value), ms >= 0 else { return "--:--" }
         let seconds = ms / 1000
@@ -210,8 +224,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func configureMediaHelper() {
-        let token = (try? KeychainStore.mediaControlToken.read()) ?? ""
-        service?.environment = ["VEN_MEDIA_IPC_TOKEN": mediaIPCToken, "VEN_MEDIA_CONTROL_TOKEN": token]
+        service?.environment = ["VEN_MEDIA_IPC_TOKEN": mediaIPCToken]
         guard let config = currentConfig else { return }
         mediaBridge.configure(config.mediaBridge, port: config.serverPort, token: mediaIPCToken)
     }
@@ -402,8 +415,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let mode = json["mode"] as? String ?? "unknown"
 
         serviceStatusItem.title = "Service: running"
-        if let media = json["media"] as? [String: Any], let action = media["last_ontime_action"] as? [String: Any] {
-            mediaStatusItem.toolTip = "Ontime media: \(action["status"] as? String ?? "unknown") \(action["path"] as? String ?? "")"
+        if let media = json["media"] as? [String: Any] {
+            latestMediaOutput = media
+            updateMediaPresentation()
         }
         modeItem.title = "Mode: " + (mode == "live" ? "LIVE" : "DRY RUN")
         ontimeConnected = ontime == "connected"
@@ -547,19 +561,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let applied = try draft.applying(to: existing)
         let keychain = KeychainStore.obsPassword
         let previousPassword = try keychain.read() ?? ""
-        let previousMediaToken = try KeychainStore.mediaControlToken.read() ?? ""
 
         do {
             try keychain.write(applied.password)
-            let controls = (applied.config.mediaBridge["http"] as? [String: Any])?["media_enabled"] as? Bool == true
-            let mediaToken = controls && draft.mediaControlToken.isEmpty ? UUID().uuidString + UUID().uuidString : draft.mediaControlToken
-            do { try KeychainStore.mediaControlToken.write(mediaToken) }
-            catch { try? keychain.write(previousPassword); throw error }
             do {
                 try applied.config.writeAtomically(to: configURL)
             } catch {
                 try? keychain.write(previousPassword)
-                try? KeychainStore.mediaControlToken.write(previousMediaToken)
                 throw error
             }
         } catch let error as SettingsDraftError {
@@ -598,8 +606,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             currentConfig = config
             let password = try KeychainStore.obsPassword.read() ?? ""
             appendLog("settings keychain read ok")
-            var draft = SettingsDraft(config: config, password: password)
-            draft.mediaControlToken = try KeychainStore.mediaControlToken.read() ?? ""
+            let draft = SettingsDraft(config: config, password: password)
             // A timer in the default run-loop mode fires only after AppKit has
             // exited the status-menu tracking loop. Dispatching straight back
             // to the main queue can still run while that loop owns the menu.
@@ -615,11 +622,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                         onOpenConfig: { [weak self] in
                             guard let self else { return }
                             NSWorkspace.shared.open(self.configURL)
+                        },
+                        loadSources: { [weak self] in
+                            guard let self else { return [] }
+                            let response = try await self.obsClient.request("GetInputList")
+                            let inputs = response["inputs"] as? [[String: Any]] ?? []
+                            return inputs.compactMap { input -> MPSSourceChoice? in
+                                guard (input["unversionedInputKind"] as? String ?? input["inputKind"] as? String) == MPSSelection.inputKind,
+                                      let uuid = input["inputUuid"] as? String, let name = input["inputName"] as? String else { return nil }
+                                return MPSSourceChoice(uuid: uuid, name: name)
+                            }.sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
                         }
                     )
                     self.settingsController = controller
                     self.appendLog("settings controller created policy=\(NSApp.activationPolicy().rawValue)")
                     controller.present()
+                    self.updateMediaPresentation()
                 }
             }
         } catch {

@@ -7,8 +7,17 @@ struct SettingsDraftTests {
         try testValidDraftUpdatesConfig()
         try testInvalidOBSPortIsFieldError()
         try testInvalidSceneRegexIsFieldError()
+        try testMediaMessagePreview()
         try testMediaConfigValidation()
         print("SettingsDraftTests: PASS")
+    }
+
+    static func testMediaMessagePreview() throws {
+        assert(MediaMessageTemplate.variables.map(\.key) == ["current_file", "remaining_hhmmss", "playlist_remaining_hhmmss"])
+        let live: [String: Any] = ["available": true, "current_file": "żółć.mp4", "remaining_ms": 0]
+        assert(MediaMessageTemplate.preview("{current_file} · {remaining_hhmmss} · {playlist_remaining_hhmmss}", state: live) == "żółć.mp4 · 00:00:00 · --:--")
+        assert(MediaMessageTemplate.preview("{{{current_file}}}", state: live) == "{żółć.mp4}")
+        assert(MediaMessageTemplate.preview("{current_file}", state: [:]) == "intro.mp4")
     }
 
     static func testMediaConfigValidation() throws {

@@ -29,6 +29,9 @@ struct StatusPresentationTests {
                 throw StatusPresentationTestFailure("every status state needs an icon")
             }
         }
+        assert(MediaOutputPresentation.summary(["output_status": "synced", "ontime_output": "secondary_message"]) == "Secondary message updated")
+        assert(MediaOutputPresentation.summary(["output_status": "error", "output_error": "ontime_http_403"]).contains("HTTP 403"))
+        assert(MediaOutputPresentation.summary(["output_status": "unknown_remaining"]).contains("unknown"))
         print("StatusPresentationTests: PASS")
     }
 }

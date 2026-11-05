@@ -22,7 +22,7 @@ struct AppConfig {
 
     private var rawRoot: [String: Any]
 
-    static let currentConfigVersion = 2
+    static let currentConfigVersion = 3
     static let defaultOBSHost = "127.0.0.1"
     static let defaultOBSPort = 4455
     static let defaultOBSBreakSceneRegex = #"^PRZERWA_.*$"#
@@ -152,12 +152,12 @@ struct AppConfig {
         if let enabled = media["enabled"], !Self.isBoolean(enabled) {
             throw ConfigValidationError.invalid("Media bridge enabled must be a boolean")
         }
-        for section in ["txt", "json", "timer", "http"] {
+        for section in ["txt", "json", "timer"] {
             if let value = media[section], !(value is [String: Any]) {
                 throw ConfigValidationError.invalid("Invalid media \(section) configuration")
             }
         }
-        for (section, key) in [("txt", "enabled"), ("json", "enabled"), ("http", "media_enabled"), ("timer", "change_stage_timer_secondary_source")] {
+        for (section, key) in [("txt", "enabled"), ("json", "enabled"), ("timer", "change_stage_timer_secondary_source")] {
             if let value = (media[section] as? [String: Any])?[key], !Self.isBoolean(value) {
                 throw ConfigValidationError.invalid("Media toggles must be booleans")
             }
@@ -214,6 +214,7 @@ struct AppConfig {
         var root = rawRoot
         root["config_version"] = Self.currentConfigVersion
         var media = mediaBridge
+        media.removeValue(forKey: "http")
         if media["enabled"] == nil { media["enabled"] = false }
         if media["source_mode"] == nil { media["source_mode"] = "follow_program" }
         root["media_bridge"] = media

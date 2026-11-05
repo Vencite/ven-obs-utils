@@ -44,7 +44,6 @@ struct SettingsDraft {
     var leaveBreakEnabled: Bool
     var dryRun: Bool
     var mediaBridge: [String: Any]
-    var mediaControlToken = ""
 
     init(config: AppConfig, password: String) {
         obsHost = config.obsHost
@@ -98,9 +97,6 @@ struct SettingsDraft {
             throw SettingsDraftError(field: .reconnectSeconds, message: "Reconnect interval must be greater than 0")
         }
 
-        if !mediaControlToken.isEmpty && mediaControlToken.utf8.count < 32 {
-            throw SettingsDraftError(field: .general, message: "Companion token must contain at least 32 bytes")
-        }
         var updated = existing
         updated.obsHost = trimmedHost
         updated.obsPort = parsedOBSPort
@@ -128,5 +124,44 @@ struct SettingsDraft {
             return String(Int(value))
         }
         return String(value)
+    }
+}
+
+struct MPSSourceChoice: Equatable {
+    let uuid: String
+    let name: String
+}
+
+enum MediaMessageTemplate {
+    static let variables: [(key: String, label: String)] = [
+        ("current_file", "Current filename"),
+        ("remaining_hhmmss", "Time remaining in current file"),
+        ("playlist_remaining_hhmmss", "Time remaining in playlist"),
+    ]
+
+    static func time(_ value: Any?) -> String {
+        guard let number = value as? NSNumber, number.doubleValue >= 0 else { return "--:--" }
+        let seconds = number.int64Value / 1000
+        return String(format: "%02lld:%02lld:%02lld", seconds / 3600, seconds / 60 % 60, seconds % 60)
+    }
+
+    static func preview(_ template: String, state: [String: Any]) -> String {
+        let live = state["available"] as? Bool == true
+        let values = ["current_file": live ? (state["current_file"] as? String ?? "—") : "intro.mp4",
+                      "remaining_hhmmss": live ? time(state["remaining_ms"]) : "00:00:45",
+                      "playlist_remaining_hhmmss": live ? time(state["playlist_remaining_ms"]) : "00:12:30"]
+        let chars = Array(template)
+        var result = ""
+        var i = 0
+        while i < chars.count {
+            if (chars[i] == "{" || chars[i] == "}"), i + 1 < chars.count, chars[i] == chars[i + 1] {
+                result.append(chars[i]); i += 2
+            } else if chars[i] == "{", let end = chars[(i + 1)...].firstIndex(of: "}") {
+                let key = String(chars[(i + 1)..<end])
+                result += values[key] ?? "{\(key)}"
+                i = end + 1
+            } else { result.append(chars[i]); i += 1 }
+        }
+        return result
     }
 }

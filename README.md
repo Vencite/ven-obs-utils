@@ -196,10 +196,10 @@ Before starting the app, stop any older manually running copy of the helper if i
 ## MPS media bridge (develop)
 
 Develop test builds include an opt-in Media Playlist Source bridge for Ontime
-auxiliary countdowns, filename TXT export and local Companion HTTP controls.
+auxiliary countdowns, secondary messages and filename TXT export.
 It is disabled by default and uses the existing OBS connection. See
 [setup, API and manual regression](MEDIA-BRIDGE.md). This does not mean the
-full macOS/OBS/Ontime/Companion workflow has passed manual acceptance.
+full macOS/OBS/Ontime workflow has passed manual acceptance.
 
 ## Configuration file
 

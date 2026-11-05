@@ -7,6 +7,7 @@ from pathlib import Path
 from unittest.mock import patch
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "services"))
 import ontime_break_sync as helper
@@ -16,7 +17,7 @@ class MediaHTTPTests(unittest.TestCase):
     def setUp(self):
         self.env = patch.dict(os.environ, {"VEN_MEDIA_IPC_TOKEN": "private-token", "VEN_MEDIA_CONTROL_TOKEN": "control-token"})
         self.env.start()
-        self.server = helper.create_local_server(helper.Config(ontime_base_url="http://unused.invalid", media_bridge={"enabled": True, "http": {"media_enabled": True}}), port=0)
+        self.server = helper.create_local_server(helper.Config(ontime_base_url="http://unused.invalid", media_bridge={"enabled": True}), port=0)
         self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
         self.thread.start()
         self.url = "http://127.0.0.1:%d" % self.server.server_address[1]
@@ -53,43 +54,95 @@ class MediaHTTPTests(unittest.TestCase):
         self.assertEqual(self.call("/media/_snapshot", {"session": "run", "sequence": 1, "snapshot": self.snapshot()}, "private-token")[0], 200)
 
     def test_private_ingestion_requires_separate_token(self):
-        for token in [None, "control-token", "wrong", "żółć"]:
-            if token == "żółć":
-                continue  # HTTP headers use Latin-1; handler compares encoded values safely.
+        for token in [None, "control-token", "wrong"]:
             self.assertEqual(self.call("/media/_session", {"session": "run"}, token)[0], 403)
-        self.assertEqual(self.call("/media/_controls")[0], 403)
-        self.assertEqual(self.call("/media/_controls", token="control-token")[0], 403)
+        self.assertEqual(self.call("/media/_status")[0], 403)
+        self.assertEqual(self.call("/media/_status", token="control-token")[0], 403)
 
     def test_status_works_without_ontime_and_hides_path(self):
         self.ingest()
-        code, state = self.call("/media/status")
+        code, state = self.call("/media/_status", token="private-token")
         self.assertEqual(code, 200)
         self.assertTrue(state["available"])
         self.assertNotIn("current_path", state)
         self.assertNotIn("playlist_remaining_ms", state)
-        self.assertEqual(self.call("/media/current-file")[1], "żółć.mp4\n".encode())
+        self.assertEqual(state["current_file"], "żółć.mp4")
+        self.assertEqual(self.call("/media/current-file")[0], 404)
+        self.assertEqual(self.call("/media/status")[0], 404)
 
-    def test_control_delivered_once_and_result_observable(self):
+    def test_public_controls_are_removed_even_with_old_token(self):
         self.ingest()
-        self.assertEqual(self.call("/media/next", {}, "private-token")[0], 403)
-        code, result = self.call("/media/next", {}, "control-token")
-        self.assertEqual(code, 202)
-        self.assertEqual(result["status"], "queued")
-        _, commands = self.call("/media/_controls", token="private-token")
-        self.assertEqual(len(commands["controls"]), 1)
-        self.assertEqual(commands["controls"][0]["source_uuid"], "uuid")
-        self.assertEqual(self.call("/media/_controls", token="private-token")[1]["controls"], [])
-        self.assertEqual(self.call("/media/_control-result", {"id": result["id"], "result": {"status": "success"}}, "private-token")[0], 200)
-        self.assertEqual(self.call("/media/status")[1]["last_control"]["status"], "success")
+        for action in ["play", "pause", "next", "previous", "restart", "stop"]:
+            for token in ["private-token", "control-token", None]:
+                self.assertEqual(self.call("/media/" + action, {}, token)[0], 404)
+        self.assertEqual(self.call("/media/_controls", token="private-token")[0], 404)
 
     def test_wrong_methods_and_invalid_state(self):
-        self.assertEqual(self.call("/media/next")[0], 405)
+        self.assertEqual(self.call("/media/next")[0], 404)
         self.assertEqual(self.call("/media/_snapshot", [], "private-token")[0], 400)
         state = self.snapshot()
         state["playlist_remaining_ms"] = 0
         self.call("/media/_session", {"session": "run"}, "private-token")
         self.assertEqual(self.call("/media/_snapshot", {"session": "run", "sequence": 1, "snapshot": state}, "private-token")[0], 400)
-        self.assertEqual(self.call("/media/pause", {}, "control-token")[0], 409)
+        self.assertEqual(self.call("/media/pause", {}, "control-token")[0], 404)
+
+    def test_connected_health_and_media_use_the_same_user_agent(self):
+        started = threading.Event()
+        agents = []
+
+        class OntimeGate(BaseHTTPRequestHandler):
+            def do_GET(inner):
+                agent = inner.headers.get("User-Agent")
+                agents.append((inner.path, agent))
+                if agent != "VEN-OBS-Utils/1.0":
+                    inner.send_error(403)
+                    return
+                if inner.path == "/api/version":
+                    payload = {"payload": "4.14.0"}
+                elif inner.path == "/api/poll":
+                    payload = {"payload": {"auxtimer1": {"current": 300000, "duration": 300000,
+                        "playback": "stop", "direction": "count-down"}}}
+                else:
+                    payload = {}
+                    if inner.path.endswith("/start"):
+                        started.set()
+                data = json.dumps(payload).encode()
+                inner.send_response(200)
+                inner.send_header("Content-Type", "application/json")
+                inner.send_header("Content-Length", str(len(data)))
+                inner.end_headers()
+                inner.wfile.write(data)
+
+            def log_message(inner, *_):
+                pass
+
+        ontime = ThreadingHTTPServer(("127.0.0.1", 0), OntimeGate)
+        ontime_thread = threading.Thread(target=ontime.serve_forever, daemon=True)
+        ontime_thread.start()
+        config = helper.Config(ontime_base_url="http://127.0.0.1:%d" % ontime.server_address[1], dry_run=False,
+            media_bridge={"enabled": True, "timer": {"media_timer_source": "current_item"}})
+        service = helper.create_local_server(config, port=0)
+        worker = threading.Thread(target=service.serve_forever, daemon=True)
+        worker.start()
+        base = "http://127.0.0.1:%d" % service.server_address[1]
+        try:
+            with urlopen(base + "/health", timeout=2) as response:
+                self.assertEqual(json.load(response)["status"], "ok")
+            for path, body in [("/media/_session", {"session": "ua-test"}),
+                ("/media/_snapshot", {"session": "ua-test", "sequence": 1, "snapshot": self.snapshot()})]:
+                request = Request(base + path, data=json.dumps(body).encode(),
+                    headers={"Authorization": "Bearer private-token", "Content-Type": "application/json"})
+                with urlopen(request, timeout=2) as response:
+                    self.assertEqual(response.status, 200)
+            self.assertTrue(started.wait(2), "Connected health succeeded but media was blocked by the HTTP gate")
+            self.assertTrue(all(agent == "VEN-OBS-Utils/1.0" for _, agent in agents))
+        finally:
+            service.shutdown()
+            service.server_close()
+            worker.join()
+            ontime.shutdown()
+            ontime.server_close()
+            ontime_thread.join()
 
     def test_media_does_not_expose_existing_break_routes(self):
         with self.assertRaises(ValueError):

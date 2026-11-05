@@ -23,6 +23,7 @@ from media_bridge import MediaBridge
 
 DEFAULT_BREAK_CUE_REGEX = r"^BRK_\d+$"
 LOG = logging.getLogger("ontime-break-sync")
+ONTIME_HTTP_HEADERS = {"Accept": "application/json", "User-Agent": "VEN-OBS-Utils/1.0"}
 
 
 @dataclass(frozen=True)
@@ -77,7 +78,7 @@ def _get_json(url: str, timeout: float) -> Any:
     request = Request(
         url,
         method="GET",
-        headers={"Accept": "application/json", "User-Agent": "VEN-OBS-Utils/1.0"},
+        headers=ONTIME_HTTP_HEADERS,
     )
     with urlopen(request, timeout=timeout) as response:
         charset = response.headers.get_content_charset() or "utf-8"
@@ -276,10 +277,9 @@ def create_local_server(
     if media_config.get("enabled") is True and host not in {"127.0.0.1", "localhost", "::1"}:
         raise ValueError("media bridge requires a loopback helper address")
     ipc_token = os.environ.get("VEN_MEDIA_IPC_TOKEN", "")
-    control_token = os.environ.get("VEN_MEDIA_CONTROL_TOKEN", "")
 
     def media_get(path):
-        request = Request(config.ontime_base_url + path, headers={"Accept": "application/json"})
+        request = Request(config.ontime_base_url + path, headers=ONTIME_HTTP_HEADERS)
         with urlopen(request, timeout=config.request_timeout_seconds) as response:
             body = response.read(2 * 1024 * 1024 + 1)
             if len(body) > 2 * 1024 * 1024:
@@ -306,11 +306,10 @@ def create_local_server(
                     and hmac.compare_digest(self.headers.get("Authorization", "").encode(), ("Bearer " + token).encode()))
 
         def do_POST(self):
-            private = self.path.startswith("/media/_")
-            if not self.path.startswith("/media/"):
+            if self.path not in {"/media/_session", "/media/_snapshot"}:
                 self._send_json(404, {"status": "error", "reason": "not_found"})
                 return
-            if not self._authorized(ipc_token if private else control_token):
+            if not self._authorized(ipc_token):
                 self._send_json(403, {"status": "error", "reason": "forbidden"})
                 return
             try:
@@ -329,14 +328,10 @@ def create_local_server(
                     result = media.reset_session(body.get("session"))
                 elif self.path == "/media/_snapshot":
                     result = media.ingest(body)
-                elif self.path == "/media/_control-result":
-                    result = media.complete_control(body.get("id"), body.get("result"))
-                elif self.path in {"/media/play", "/media/pause", "/media/next", "/media/previous", "/media/restart", "/media/stop"}:
-                    result = media.request_control(self.path.rsplit("/", 1)[1])
                 else:
                     self._send_json(404, {"status": "error", "reason": "not_found"})
                     return
-                code = 202 if result.get("status") == "queued" else (409 if result.get("status") == "error" else 200)
+                code = 409 if result.get("status") == "error" else 200
                 self._send_json(code, result)
             except (ValueError, TypeError, KeyError, UnicodeError) as exc:
                 self._send_json(400, {"status": "error", "reason": "invalid_media_request"})
@@ -344,27 +339,14 @@ def create_local_server(
                 self.close_connection = True
 
         def do_GET(self):
-            if self.path == "/media/_controls":
+            if self.path == "/media/_status":
                 if not self._authorized(ipc_token):
                     self._send_json(403, {"status": "error", "reason": "forbidden"})
                 else:
-                    self._send_json(200, {"controls": media.take_controls()})
-                return
-            if self.path == "/media/status":
-                self._send_json(200, media.status())
-                return
-            if self.path == "/media/current-file":
-                text = media.current_file()
-                body = (text + "\n" if text else "").encode("utf-8")
-                self.send_response(200)
-                self.send_header("Content-Type", "text/plain; charset=utf-8")
-                self.send_header("Cache-Control", "no-store")
-                self.send_header("Content-Length", str(len(body)))
-                self.end_headers()
-                self.wfile.write(body)
+                    self._send_json(200, media.status())
                 return
             if self.path.startswith("/media/"):
-                self._send_json(405, {"status": "error", "reason": "use_post"})
+                self._send_json(404, {"status": "error", "reason": "not_found"})
                 return
             if self.path == "/health":
                 try:

@@ -1,148 +1,97 @@
-# MPS media bridge (develop test builds)
+# VOS media outputs — develop test builds
 
-This opt-in feature follows the versioned Media Playlist Source Vendor API. It
-uses the app's existing OBS connection. It never reads private input settings,
-calculates a shuffle order, decodes media or advances the Ontime main rundown.
-Existing Program break automation remains separate.
+VOS follows the Media Playlist Source Vendor API through its existing OBS
+connection. It sends that state to Ontime and optional filename exports.
+External playlist control belongs to MPS/obs-websocket; VOS has no public
+Companion/media-control API. Its authenticated app/helper communication remains private.
 
-Prerequisite: the Vencite MPS develop implementation of schema v1, currently
-`45bcb9e` or later, with obs-websocket enabled. This is not a claim that MPS #4
-has been released. This integration was started explicitly against test builds.
-The complete OBS + macOS + Ontime + Companion workflow still needs manual testing.
+## Settings
 
-## Setup
+Settings are divided into **Connections**, **Media outputs** and **Break automation**.
+Existing OBS credentials, break patterns and automation are retained. Config v2
+migrates to v3 with a backup and removes the obsolete media HTTP configuration.
 
-1. Back up your app config and start with **Dry run** enabled. Saving/migration
-   retains existing break settings and OBS password; config v1 migrates to v2
-   with the existing `.backup` mechanism. Media defaults to disabled.
-2. In Settings, enable **MPS media bridge**. Follow Program requires exactly one
-   visible MPS, including inside nested scenes/groups. Hidden sources and Preview
-   are excluded; shared references count once. Zero/multiple candidates are
-   reported unavailable. Alternatively turn Follow Program off and enter the
-   exact source UUID (preferred; survives rename), or its exact name if UUID is
-   empty. An invalid configured UUID is not silently rescued by a name.
-3. Check **Media** in the menu for source, filename and current/playlist remaining.
-   Unknown is `--:--`. These are MPS's real times to end at the effective speed;
-   they are not media-clock durations. Loop shows the current pass only.
-4. To export a filename, enable TXT and choose an absolute path, such as
-   `/Users/you/Show/current-media.txt`. Writes are atomic UTF-8, filename plus
-   newline, only when changed. Default inactive policy clears it; Keep last is
-   explicit. Disabling export leaves the file alone. Optional config-only JSON
-   export uses `media_bridge.json.enabled/path`; clock progress alone does not
-   rewrite this file, so it is a snapshot, not a live countdown.
-5. To use Ontime, select `current_item` or `playlist` (default `off`) and reserve
-   auxiliary slot 1–3 exclusively for this bridge. Default output is the auxiliary
-   timer. Secondary message is an alternative; supported placeholders are
-   `{current_file}`, `{remaining_hhmmss}`, `{playlist_remaining_hhmmss}`.
-   Stage Timer display is changed only with its separate checkbox.
-6. Test in Dry run before allowing real Ontime actions. Dry run suppresses every
-   media-related Ontime write, including pause/stop/message changes. It does not
-   suppress TXT or explicitly enabled OBS media controls.
+In Media outputs:
 
-An unknown playlist duration does not mean zero and does not identify its cause.
-The API cannot distinguish pending discovery from an unsupported or unreadable
-file. The bridge displays unknown and stops the selected countdown by default;
-current-item mode can still work when only that remainder is known. Keep last
-pauses an owned auxiliary timer rather than leaving a misleading countdown running.
+1. Enable media outputs. Automatically follow Program selects the single visible
+   MPS, including nested scenes/groups, and ignores Preview. Zero or multiple
+   candidates produce a clear unavailable state. To choose a fixed source,
+   select it from the OBS source list; its UUID is stored internally.
+2. Enable filename export if needed. **Choose file…** selects an exact TXT path;
+   **Choose folder…** uses `current-media.txt` in that folder. Writes are atomic
+   UTF-8, filename plus newline, only when changed. Inactive behavior can clear
+   the text or keep the last filename.
+3. Enable Ontime output if needed. An auxiliary countdown can follow the current
+   file or the current playlist pass. Reserve slot 1, 2 or 3 for VOS. The main
+   rundown is not advanced by media playback. Slot controls appear only for an
+   auxiliary timer; text-message controls appear only for a message.
+4. A secondary message can mix **Current filename**, **Time remaining in current
+   file** and **Time remaining in playlist** using **Insert variable…**. The
+   preview uses live values when available, otherwise an example. Unknown time
+   appears as `--:--`; a known filename need not disappear because time is unknown.
+5. **Show this output in Stage Timer’s secondary area** changes Ontime's selected
+   display source. Otherwise choose the same slot/message in Ontime manually.
+6. Save & Reconnect applies the settings. The menu and settings show the actual
+   media-output result separately from the general Ontime connection status.
 
-## Sync and recovery
+Dry run suppresses all Ontime changes, including timer stop/pause and message
+updates. It does not suppress TXT. Start with Dry run for setup and use an isolated
+rundown/spare auxiliary slot for real output tests.
 
-Snapshots and VendorEvent payloads use the same strict schema v1 validation:
-all three `*_known` booleans are required; false requires absence of the value,
-true requires a non-negative integer. Known zero remains zero. Unsupported
-schemas, inconsistent fields and placeholders fail closed.
+## Ontime 4.14.0 compatibility
 
-Swift selects the source, rejects older revisions and sends ordered snapshots
-through authenticated loopback IPC. OBS disconnect/reselection and helper restart
-invalidate state before a fresh baseline/snapshot. A playing source that stops
-publishing is rechecked; no elapsed time is invented between snapshots. Frozen
-paused values remain authoritative. The helper expires lost app heartbeats after
-six seconds and stops/pauses its owned timer.
+The user reported Ontime **4.14.0**. Compatibility is tested against its documented
+wire behavior using local fixtures, not against the user's live production server.
+The following defects were reproduced and fixed:
 
-Ontime uses `/api/poll` to validate the chosen auxiliary slot and compare its
-actual current value. Current `start` and historical `play` runtime states are
-accepted. Rebasing uses stop → direction → duration → start (then pause if
-needed); pause on an already stopped timer does not establish a paused countdown.
-Continuous updates do not reset duration each second. A discrepancy above
-1500 ms permits correction. Ambiguous failed non-idempotent actions are not
-blindly retried. Secondary text is deduplicated and coalesced to at most 1 Hz.
+- The media requests used Python’s default User-Agent, which Cloudflare rejected
+  with HTTP403 while health checks using `VEN-OBS-Utils/1.0` succeeded. Both now
+  share the same headers. A local HTTP gate reproduces Connected + failed media
+  before the fix and successful output afterwards.
+- Stage Timer auxiliary selection requires `secondarySource=aux1`, `aux2` or
+  `aux3`. The old `aux` value was rejected/coerced to no source in 4.14.0.
+- Auxiliary runtime values may be finite fractional milliseconds. They are valid
+  clock readings, not evidence that the selected auxiliary slot is unavailable.
 
-The implementation was checked against the official Ontime auxiliary service,
-utils and types on 2026-11-03. Actual installed Ontime timing semantics and
-versions must still be recorded during the manual test.
+The existing auxiliary and secondary-message HTTP paths match 4.14.0. The new output status reports HTTP failures and unavailable/unknown states.
+Read-only requests to the user’s server confirmed403 with Python’s default agent
+and successful version/poll with the VOS agent. No state-changing calls were
+made to that server; actual auxiliary/message output still needs a user test.
 
-## Local HTTP / Companion
+## Time and recovery
 
-The existing helper serves these additional endpoints on its normal port
-(default `127.0.0.1:8765`). Media requires an IPv4 loopback helper bind. LAN
-binding is not supported for this feature; use Companion on the same Mac or an
-explicitly configured authenticated tunnel. No change exposes the legacy break
-endpoints to the LAN. No CORS access is enabled.
+The current-file and playlist remaining values come directly from MPS and already
+account for playback speed. Playlist means the current pass, including with Loop.
+Unknown is never replaced with zero. Unknown auxiliary time stops/pauses the owned
+timer according to the inactive policy; a text message can show known fields and
+`--:--` for unknown fields.
 
-| Request | Result |
-| --- | --- |
-| `GET /media/status` | Normalized state, explicit availability/reason, last output/control result; no full media path |
-| `GET /media/current-file` | UTF-8 filename + newline, empty when inactive |
-| `POST /media/play`, `/pause`, `/next`, `/previous`, `/restart`, `/stop` | Opt-in OBS control, dedicated bearer token required |
+VOS validates schema v1's three known flags and absent/known values, preserves
+known zero and rejects older revisions. Source changes and reconnects invalidate
+state until fresh OBS data arrives. Lost app heartbeats expire after six seconds.
+Paused snapshots remain frozen and authoritative.
 
-Control paths are under `/media/` (e.g. `/media/next`), never GET side effects.
-Enable controls separately in Settings. A blank token is generated on save;
-reopen Settings to copy it. It is stored in Keychain, not JSON config. Public
-control tokens cannot impersonate telemetry: app/helper IPC has a separate
-per-app-run secret passed only via the managed process environment. Private
-`/media/_*` endpoints are not Companion APIs. Requests have body/time limits.
+Ontime actual auxiliary state is compared through `/api/poll`; normal progress
+does not rewrite duration every second. Rebase is stop → direction → duration →
+start (then pause if required), with correction above 1500 ms drift. Secondary
+messages are deduplicated/coalesced to 1 Hz; invalidation clears immediately.
 
-POST responds `202 {"status":"queued","id":"..."}` when accepted. This is not
-proof OBS executed it: check `/media/status.last_control` for success/error/ignored
-with that ID. A stale/disconnected/ambiguous target is refused. Commands are
-bounded, dequeued once, serialized through Swift and never automatically retried.
-Use separate play/pause actions rather than a toggle.
+## Manual regression for this build
 
-```sh
-curl http://127.0.0.1:8765/media/status
-curl -X POST -H "Authorization: Bearer $MPS_CONTROL_TOKEN" \
-  http://127.0.0.1:8765/media/next
-```
+- Confirm original Program break enter/leave automation and OBS password still work.
+- Check automatic Program selection, nested/shared/hidden sources, Preview,
+  missing/ambiguous source and fixed-source rename/reconnect.
+- Toggle each output: unrelated fields should collapse. Auxiliary slot must not
+  appear for a message. Choose both a file and folder for TXT and check actual output.
+- Insert all three variables, mix literal text, verify preview and actual message.
+- With Dry run OFF on a test rundown, verify auxiliary 1/2/3 and message output,
+  Stage Timer source selection and separate output status/errors.
+- Complete MPS tests 12/13: 100%/200%, pause, paused seek, restart, next/previous,
+  list edit and unknown/recovery. A+B+C=62s: after 3s media in A, 59s at100%,
+  approximately29.5s at200% for all local files.
+- Disconnect/restart OBS/helper/Ontime; no stale running timer or replay.
+- The removed `/media/status`, `/media/current-file` and control routes must not work;
+  private ingestion requires its independent per-app-run secret.
 
-Companion Generic HTTP setup:
-
-1. Add a Generic HTTP connection with base URL `http://127.0.0.1:8765`.
-2. Create custom variable `mps`. Add a GET action for `/media/status`, store its
-   response in `mps`, and turn **JSON Stringify Result off** to keep a JSON object.
-3. Run that action from a **Time interval trigger every 1000 ms**. A GET endpoint
-   alone does not supply live variables. Disable the trigger when not needed.
-4. In button text expression mode, use the stored object's `current_file` and
-   independently test `playlist_remaining_known` before displaying
-   `playlist_remaining_ms`. Do not substitute zero for an absent field. Check
-   the expression syntax for your installed Companion version; the engine changed
-   in Companion 5.0. First verify the object contents in Custom Variables.
-5. For Next, add a POST `/media/next` action with header JSON
-   `{"Authorization":"Bearer <your dedicated token>"}` and an empty JSON body.
-   No Digest or Basic authentication is used. Protect Companion config exports
-   containing a manually entered bearer header.
-
-This recipe follows the upstream module's response-variable options; a visible
-live button and end-to-end control have **not yet been verified** on the user's
-Companion installation. Record that result before claiming the acceptance test.
-
-## Manual regression
-
-Use a test rundown and a spare auxiliary slot, never a production feed:
-
-- Confirm existing Program break enter/leave and Preview-only behavior unchanged.
-- Explicit UUID + rename; nested/shared/hidden MPS; 0 and 2 candidates; reconnect.
-- A/B/C = 62 s at 100%; at media position 3 s in A: 59 s remaining. With all
-  local files at 200%: approximately 29.5 s. Check actual payloads and menu/Ontime.
-- Pause/resume, paused seek, restart, next/previous, edit, speed and item changes.
-- Missing/corrupt files: unknown aggregate, no invented zero; regain known state.
-- Restart helper, disconnect OBS and Ontime; no stale running timer or action replay.
-- TXT Unicode, clear/keep-last, unchanged filename and unwritable path.
-- Companion status refresh/button, controls, wrong token, wrong method, queued
-  result vs executed result. Paused status remains valid without Vendor spam.
-- Verify app packaging includes both helper Python files and starts on macOS.
-
-References: [MPS schema](https://github.com/Vencite/media-playlist-source/blob/develop/docs/playlist-telemetry.md),
-[Ontime HTTP](https://docs.getontime.no/api/protocols/http/),
-[Ontime auxiliary implementation](https://github.com/cpvalente/ontime/tree/master/apps/server/src/services/aux-timer-service),
-[Generic HTTP](https://github.com/bitfocus/companion-module-generic-http/blob/master/companion/HELP.md),
-[Companion expressions](https://companion.free/user-guide/v4.2/expressions/).
+Test builds are not releases. Automated fixtures and UI screenshots do not replace
+confirmation on the user's macOS/OBS/Ontime installation.

@@ -119,6 +119,20 @@ jobs:
             app/Tests/MPSStateTests.swift \
             -o /tmp/mps-state-tests
           /tmp/mps-state-tests
+      - name: Verify settings visibility and capture previews
+        run: |
+          xcrun --sdk macosx swiftc -parse-as-library -framework AppKit \
+            app/Sources/SceneAutomation.swift app/Sources/AppConfig.swift \
+            app/Sources/SettingsDraft.swift app/Sources/SettingsWindowController.swift \
+            app/Tests/SettingsWindowLayoutTests.swift -o /tmp/settings-layout-tests
+          /tmp/settings-layout-tests
+      - name: Upload settings previews
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: VOS-settings-previews-${{ github.sha }}
+          path: /tmp/vos-ui-screenshots/*.png
+          if-no-files-found: ignore
       - name: Build macOS app
         run: ./build_app.sh
       - name: Package develop test build

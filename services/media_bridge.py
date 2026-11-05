@@ -4,19 +4,19 @@ from __future__ import annotations
 import copy
 import json
 import logging
+import math
 import os
 import string
 import tempfile
 import threading
 import time
-import uuid
 from pathlib import Path
 from typing import Any, Callable
 from urllib.parse import quote
+from urllib.error import HTTPError
 
 LOG = logging.getLogger("ontime-break-sync")
 _FLAGS = {"remaining_known": "remaining_ms", "playlist_remaining_known": "playlist_remaining_ms", "items_remaining_known": "items_remaining"}
-_ACTIONS = {"play", "pause", "next", "previous", "restart", "stop"}
 
 
 def unavailable(reason: str) -> dict[str, Any]:
@@ -78,12 +78,11 @@ def _validated_config(value: Any) -> dict:
     if not isinstance(value, dict):
         raise ValueError("media_bridge_config_must_be_object")
     config = copy.deepcopy(value)
-    for section in ("txt", "json", "timer", "http"):
+    for section in ("txt", "json", "timer"):
         if section in config and not isinstance(config[section], dict):
             raise ValueError(f"invalid_{section}_config")
     for section, field in ((config, "enabled"), (config.get("txt", {}), "enabled"),
                            (config.get("json", {}), "enabled"),
-                           (config.get("http", {}), "media_enabled"),
                            (config.get("timer", {}), "change_stage_timer_secondary_source")):
         if field in section and type(section[field]) is not bool:
             raise ValueError(f"invalid_{field}")
@@ -175,10 +174,8 @@ class MediaBridge:
         self._version = 0
         self._output_generation = 0
         self._processed = -1
-        self._controls: list[dict] = []
-        self._pending_controls: dict[str, dict] = {}
-        self._last_control: dict | None = None
         self._last_ontime_action: dict | None = None
+        self._last_ontime_request: dict | None = None
         self._output_error: str | None = None
         self._last_txt: str | None = None
         self._last_json: str | None = None
@@ -204,8 +201,6 @@ class MediaBridge:
             self._sequence = -1
             self._snapshot = unavailable("waiting_for_snapshot")
             self._received = 0
-            self._controls.clear()
-            self._pending_controls.clear()
             self._version += 1
             self._output_generation += 1
         self._wake.set()
@@ -233,9 +228,6 @@ class MediaBridge:
                 self._output_generation += 1
             self._received = time.monotonic()
             self._version += 1
-            if (not snapshot.get("available") or snapshot.get("source_uuid") != old.get("source_uuid")):
-                self._controls.clear()
-                self._pending_controls.clear()
         self._wake.set()
         return {"status": "success"}
 
@@ -246,8 +238,6 @@ class MediaBridge:
         if self._received and time.monotonic() - self._received > 6 and self._snapshot.get("available"):
             self._snapshot = unavailable("stale_telemetry")
             self._output_generation += 1
-            self._controls.clear()
-            self._pending_controls.clear()
             self._version += 1
             self._wake.set()
 
@@ -259,10 +249,33 @@ class MediaBridge:
                 state.pop("current_path", None)
             if self._last_ontime_action:
                 state["last_ontime_action"] = copy.deepcopy(self._last_ontime_action)
+            if self._last_ontime_request:
+                state["last_ontime_request"] = copy.deepcopy(self._last_ontime_request)
+            timer = self.config.get("timer", {})
+            mode = timer.get("media_timer_source", "off")
+            state["ontime_output"] = timer.get("ontime_output", "auxiliary_timer")
+            state["media_timer_source"] = mode
+            if not self.config.get("enabled"):
+                state["output_status"] = "disabled"
+            elif mode == "off":
+                state["output_status"] = "off"
+            elif self._output_error:
+                state["output_status"] = "error"
+            elif not state.get("available"):
+                state["output_status"] = "waiting_for_snapshot"
+            elif state.get("state") not in {"playing", "paused"}:
+                state["output_status"] = "inactive"
+            elif (timer.get("ontime_output", "auxiliary_timer") == "auxiliary_timer" and
+                  not state.get("remaining_known" if mode == "current_item" else "playlist_remaining_known")):
+                state["output_status"] = "unknown_remaining"
+            elif self.dry_run:
+                state["output_status"] = "dry_run"
+            elif self._processed != self._version:
+                state["output_status"] = "pending"
+            else:
+                state["output_status"] = "synced"
             if self._output_error:
                 state["output_error"] = self._output_error
-            if self._last_control:
-                state["last_control"] = copy.deepcopy(self._last_control)
             return state
 
     def current_file(self) -> str:
@@ -275,41 +288,6 @@ class MediaBridge:
             return ""
         name = state.get("current_file", "")
         return name.replace("\\", "/").rsplit("/", 1)[-1].replace("\r", " ").replace("\n", " ")
-
-    def request_control(self, action: str) -> dict:
-        if action not in _ACTIONS:
-            raise ValueError("invalid_action")
-        with self._lock:
-            self._expire_locked()
-            if not self.config.get("enabled") or not self.config.get("http", {}).get("media_enabled", False):
-                return {"status": "ignored", "reason": "controls_disabled"}
-            if not self._snapshot.get("available") or self._snapshot.get("stale"):
-                return {"status": "error", "reason": "source_unavailable"}
-            if len(self._pending_controls) >= 16:
-                return {"status": "error", "reason": "control_queue_full"}
-            command = {"id": str(uuid.uuid4()), "action": action,
-                       "source_uuid": self._snapshot["source_uuid"], "session": self._session}
-            self._controls.append(command)
-            self._pending_controls[command["id"]] = command
-            return {"status": "queued", "id": command["id"]}
-
-    def take_controls(self) -> list:
-        with self._lock:
-            self._expire_locked()
-            commands = self._controls
-            self._controls = []
-            return copy.deepcopy(commands)
-
-    def complete_control(self, identifier: str, result: dict) -> dict:
-        if not isinstance(result, dict) or result.get("status") not in {"success", "ignored", "error"}:
-            raise ValueError("invalid_control_result")
-        with self._lock:
-            command = self._pending_controls.pop(identifier, None)
-            if not command:
-                return {"status": "ignored", "reason": "unknown_control"}
-            self._last_control = {"id": identifier, "action": command["action"],
-                                  "status": result["status"], "reason": str(result.get("reason", ""))[:256]}
-            return copy.deepcopy(self._last_control)
 
     def start(self) -> None:
         if not self.config.get("enabled") or self._thread:
@@ -365,7 +343,9 @@ class MediaBridge:
                     operation(state)
                 except Exception as exc:
                     LOG.warning("MPS output failed: %s", exc)
-                    if isinstance(exc, ValueError):
+                    if isinstance(exc, HTTPError):
+                        errors.append(f"ontime_http_{exc.code}")
+                    elif isinstance(exc, ValueError):
                         errors.append(str(exc)[:256])
                     elif isinstance(exc, InterruptedError):
                         errors.append("snapshot_superseded")
@@ -396,13 +376,30 @@ class MediaBridge:
                 _atomic_write(export.get("path", ""), json.dumps(state, ensure_ascii=False, sort_keys=True) + "\n")
                 self._last_json = signature
 
+    def _request(self, path: str) -> Any:
+        try:
+            result = self._get(path)
+        except Exception as exc:
+            attempt = {"status": "error", "path": path,
+                       "reason": "http_error" if isinstance(exc, HTTPError) else "request_failed"}
+            if isinstance(exc, HTTPError):
+                attempt["http_status"] = exc.code
+            with self._lock:
+                self._last_ontime_request = attempt
+                if path != "/api/poll":
+                    self._last_ontime_action = copy.deepcopy(attempt)
+            raise
+        with self._lock:
+            self._last_ontime_request = {"status": "success", "path": path}
+        return result
+
     def _action(self, path: str) -> None:
         with self._lock:
             self._expire_locked()
             if self._output_generation != self._working_generation:
                 raise InterruptedError("snapshot_superseded")
         if not self.dry_run:
-            self._get(path)
+            self._request(path)
         with self._lock:
             self._last_ontime_action = {"status": "dry_run" if self.dry_run else "success", "path": path}
 
@@ -415,11 +412,12 @@ class MediaBridge:
             raise ValueError("invalid_timer_source")
         field = "remaining_ms" if mode == "current_item" else "playlist_remaining_ms"
         known = "remaining_known" if mode == "current_item" else "playlist_remaining_known"
-        valid = (state.get("available") and not state.get("stale") and state.get(known) and
-                 state.get("state") in {"playing", "paused"})
+        active = (state.get("available") and not state.get("stale") and
+                  state.get("state") in {"playing", "paused"})
         if timer.get("ontime_output", "auxiliary_timer") == "secondary_message":
-            self._secondary(state, timer, bool(valid))
+            self._secondary(state, timer, bool(active))
             return
+        valid = active and state.get(known)
         index = timer.get("aux_timer_index", 1)
         if type(index) is not int or index not in {1, 2, 3}:
             raise ValueError("invalid_aux_timer_index")
@@ -439,11 +437,12 @@ class MediaBridge:
         signature = (state.get("source_uuid"), state.get("current_item_id"), state.get("speed_percent"), state.get("snapshot_revision"))
         runtime = None
         if not self.dry_run:
-            poll = self._get("/api/poll")
+            poll = self._request("/api/poll")
             if isinstance(poll, dict) and isinstance(poll.get("payload"), dict):
                 poll = poll["payload"]
             runtime = poll.get(f"auxtimer{index}") if isinstance(poll, dict) else None
-            if (not isinstance(runtime, dict) or type(runtime.get("current")) is not int or
+            if (not isinstance(runtime, dict) or (type(runtime.get("current")) not in {int, float} or
+                    not math.isfinite(runtime["current"])) or
                     runtime.get("playback") not in {"start", "play", "pause", "stop"}):
                 raise ValueError("aux_timer_unavailable")
             runtime = {**runtime, "playback": "play" if runtime["playback"] == "start" else runtime["playback"]}
@@ -465,7 +464,7 @@ class MediaBridge:
         elif state_change or (runtime is not None and runtime["playback"] != desired):
             self._action(prefix + ("/pause" if desired == "pause" else "/start"))
         if timer.get("change_stage_timer_secondary_source", False) and not self._secondary_selected:
-            self._action("/api/message/timer?secondarySource=aux")
+            self._action(f"/api/message/timer?secondarySource=aux{index}")
             self._secondary_selected = True
         self._timer_owned = True
         self._timer_signature = signature
@@ -484,7 +483,7 @@ class MediaBridge:
             raise ValueError("invalid_secondary_template")
         text = template.format(**values) if valid else ""
         if text != self._last_message:
-            if time.monotonic() - self._message_sent_at < 1:
+            if valid and time.monotonic() - self._message_sent_at < 1:
                 with self._lock:
                     self._message_due = self._message_sent_at + 1
                 return
