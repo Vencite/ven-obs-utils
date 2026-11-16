@@ -63,7 +63,8 @@ exit 1
     def test_develop_sha_is_separate_from_apple_numeric_versions(self):
         sha = "abcdef0123456789" * 2 + "abcdef01"
         info = self.build(DEVELOP_SHA=sha)
-        self.assertEqual(info["CFBundleShortVersionString"], "0.2.0")
+        release = (ROOT / ".github/RELEASE_VERSION").read_text().strip().removeprefix("v")
+        self.assertEqual(info["CFBundleShortVersionString"], re.split(r"[-+]", release)[0])
         self.assertRegex(info["CFBundleVersion"], r"^[0-9]+(?:\.[0-9]+){0,2}$")
         self.assertEqual(info["VENDevelopCommit"], sha)
         self.assertIn("develop " + sha[:12], info["CFBundleGetInfoString"])
