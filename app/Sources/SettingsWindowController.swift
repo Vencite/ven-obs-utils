@@ -1,6 +1,10 @@
 import AppKit
 import UniformTypeIdentifiers
 
+private final class SettingsPageDocumentView: NSView {
+    override var isFlipped: Bool { true }
+}
+
 @MainActor
 final class AuxiliaryTimerRow: NSStackView {
     let enabled = NSButton(checkboxWithTitle: "Enabled", target: nil, action: nil)
@@ -219,7 +223,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
         scroll.hasVerticalScroller = true
         scroll.autohidesScrollers = true
         scroll.drawsBackground = false
-        let document = NSView()
+        let document = SettingsPageDocumentView()
         document.translatesAutoresizingMaskIntoConstraints = false
         scroll.documentView = document
         let content = stack(spacing: 16)
@@ -307,16 +311,14 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
         inactivePolicy.addItems(withTitles: ["Stop / clear when unavailable", "Pause / keep last value when unavailable"])
         timerBody.addArrangedSubview(messageBody)
         timerBody.addArrangedSubview(inactivePolicy)
-        mediaBody.addArrangedSubview(card("Secondary message", "Use the template independently of auxiliary timers.", [timerEnabled, timerBody]))
         _ = stack(stageBody, spacing: 8)
         stageSource.autoenablesItems = false
         stageSource.addItems(withTitles: ["Do not change automatically", "Aux 1", "Aux 2", "Aux 3", "Secondary message"])
         stageBody.addArrangedSubview(row("Stage Timer", stageSource))
-        stageBody.addArrangedSubview(note("Secondary area: show this one selected source, or choose it in Ontime."))
-        mediaBody.addArrangedSubview(stageBody)
+        stageSource.toolTip = "Choose the source shown in Ontime’s secondary area, or leave it unchanged."
         outputStatus.font = .systemFont(ofSize: 12)
         outputStatus.textColor = .secondaryLabelColor
-        mediaBody.addArrangedSubview(outputStatus)
+        mediaBody.addArrangedSubview(card("Secondary message", "Message and Stage Timer display settings.", [timerEnabled, timerBody, stageBody, outputStatus]))
         for button in [mediaEnabled, txtEnabled, timerEnabled] {
             button.target = self
             button.action = #selector(optionsChanged)

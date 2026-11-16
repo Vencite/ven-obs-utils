@@ -47,6 +47,28 @@ struct SettingsWindowLayoutTests {
             }
             return true
         }
+        let tabs = allViews().compactMap { $0 as? NSTabView }.first!
+        let selectedTab = tabs.selectedTabViewItem!
+        tabs.selectTabViewItem(withIdentifier: "breaks")
+        view.layoutSubtreeIfNeeded()
+        let breakScroll = tabs.selectedTabViewItem!.view as! NSScrollView
+        let breakDocument = breakScroll.documentView!
+        precondition(breakDocument.isFlipped, "Short settings pages must start at the top")
+        let breakCard = label("Program scene transitions")
+        let headingFrame = breakCard.convert(breakCard.bounds, to: breakDocument)
+        precondition(headingFrame.minY < 100, "Break settings must not leave a viewport-sized gap above the heading")
+        tabs.selectTabViewItem(selectedTab)
+        let stageControl = allViews().compactMap { $0 as? NSPopUpButton }.first { $0.itemTitles.contains("Do not change automatically") }!
+        let messageHeading = label("Secondary message")
+        func enclosingBox(_ node: NSView) -> NSBox? {
+            var current = node.superview
+            while let parent = current {
+                if let box = parent as? NSBox { return box }
+                current = parent.superview
+            }
+            return nil
+        }
+        precondition(enclosingBox(stageControl) === enclosingBox(messageHeading), "Stage display settings belong inside the secondary message card")
         func rows() -> [AuxiliaryTimerRow] { allViews().compactMap { $0 as? AuxiliaryTimerRow } }
         precondition(rows().count == 1, "Legacy auxiliary output must become one editable row")
         precondition(rows()[0].slot.indexOfSelectedItem == 0 && rows()[0].source.indexOfSelectedItem == 1)
