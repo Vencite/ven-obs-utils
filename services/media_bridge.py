@@ -465,6 +465,9 @@ class MediaBridge:
             elif state.get("state") not in {"playing", "paused"}:
                 state["output_status"] = "inactive"
             elif (timer.get("ontime_output", "auxiliary_timer") == "auxiliary_timer" and
+                  mode == "playlist" and state.get("loop")):
+                state["output_status"] = "playlist_looping"
+            elif (timer.get("ontime_output", "auxiliary_timer") == "auxiliary_timer" and
                   not state.get("remaining_known" if mode == "current_item" else "playlist_remaining_known")):
                 state["output_status"] = "unknown_remaining"
             elif self.dry_run:
@@ -482,7 +485,7 @@ class MediaBridge:
                     statuses = {row["output_status"] for row in active}
                     if self._output_error: state["output_status"] = "error"
                     elif self._processed != self._version: state["output_status"] = "pending"
-                    else: state["output_status"] = next((value for value in ("waiting_for_snapshot", "unknown_remaining", "inactive", "dry_run") if value in statuses), "synced")
+                    else: state["output_status"] = next((value for value in ("waiting_for_snapshot", "playlist_looping", "unknown_remaining", "inactive", "dry_run") if value in statuses), "synced")
             message = timer.get("ontime_output") == "secondary_message" and mode != "off" and self.config.get("enabled")
             if message:
                 state["secondary_message_status"] = "error" if self._message_error else "waiting_for_snapshot" if not state.get("available") else "dry_run" if self.dry_run else "pending" if self._processed != self._version else "synced"
@@ -506,6 +509,7 @@ class MediaBridge:
             elif error: status = "error"
             elif not state.get("available"): status = "waiting_for_snapshot"
             elif state.get("state") not in {"playing", "paused"}: status = "inactive"
+            elif mode == "playlist" and state.get("loop"): status = "playlist_looping"
             elif not state.get(known): status = "unknown_remaining"
             elif self.dry_run: status = "dry_run"
             elif self._processed != self._version: status = "pending"
@@ -718,7 +722,8 @@ class MediaBridge:
         mode = timer["media_timer_source"]
         field = "remaining_ms" if mode == "current_item" else "playlist_remaining_ms"
         known = "remaining_known" if mode == "current_item" else "playlist_remaining_known"
-        valid = (state.get("available") and not state.get("stale") and state.get("state") in {"playing", "paused"} and state.get(known))
+        valid = (state.get("available") and not state.get("stale") and state.get("state") in {"playing", "paused"} and state.get(known)
+                 and not (mode == "playlist" and state.get("loop")))
         index = timer.get("aux_timer_index", 1)
         prefix = f"/api/auxtimer/{index}"
         if not valid:
@@ -781,7 +786,7 @@ class MediaBridge:
             return
         values = {"current_file": self._filename(state),
                   "remaining_hhmmss": _clock(state.get("remaining_ms")),
-                  "playlist_remaining_hhmmss": _clock(state.get("playlist_remaining_ms"))}
+                  "playlist_remaining_hhmmss": _clock(None if state.get("loop") else state.get("playlist_remaining_ms"))}
         template = timer.get("secondary_message_template", "VT: {current_file} · {playlist_remaining_hhmmss}")
         if not isinstance(template, str) or len(template) > 2048:
             raise ValueError("invalid_secondary_template")

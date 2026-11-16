@@ -215,7 +215,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if state["available"] as? Bool == true {
             mediaStatusItem.title = "Playlist: \(state["source_name"] as? String ?? "MPS")"
             mediaFileItem.title = "Playing: \(state["current_file"] as? String ?? "—")"
-            mediaTimeItem.title = "Remaining: file \(Self.mediaTime(state["remaining_ms"])) · playlist \(Self.mediaTime(state["playlist_remaining_ms"]))"
+            mediaTimeItem.title = MediaMessageTemplate.remainingSummary(state)
         } else {
             mediaStatusItem.title = "Playlist: \(state["reason"] as? String ?? "waiting for OBS")"
             mediaFileItem.title = "Playing: —"
@@ -224,12 +224,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let output = MediaOutputPresentation.summary(latestMediaOutput)
         mediaOutputItem.title = "Media output: " + output
         settingsController?.updateMediaStatus(state, output: output, outputs: latestMediaOutput)
-    }
-
-    private static func mediaTime(_ value: Any?) -> String {
-        guard let ms = MPSState.integer(value), ms >= 0 else { return "--:--" }
-        let seconds = ms / 1000
-        return String(format: "%02d:%02d:%02d", seconds / 3600, seconds / 60 % 60, seconds % 60)
     }
 
     private func configureMediaHelper() {

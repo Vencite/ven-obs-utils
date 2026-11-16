@@ -40,7 +40,7 @@ enum MediaOutputPresentation {
             var parts = rows.map { row -> String in
                 let index = row["aux_timer_index"] as? Int ?? 0
                 let status = row["output_status"] as? String ?? "pending"
-                let label = status == "unknown_remaining" ? "waiting for known duration" : status == "waiting_for_snapshot" ? "waiting for MPS" : status.replacingOccurrences(of: "_", with: " ")
+                let label = status == "playlist_looping" ? "Playlist is looping" : status == "unknown_remaining" ? "waiting for known duration" : status == "waiting_for_snapshot" ? "waiting for MPS" : status.replacingOccurrences(of: "_", with: " ")
                 return "Aux \(index): " + label
             }
             if let message = state["secondary_message_status"] as? String { parts.append("Message: " + message.replacingOccurrences(of: "_", with: " ")) }
@@ -71,6 +71,7 @@ enum MediaOutputPresentation {
         case "off": return "Ontime output off"
         case "waiting_for_snapshot": return "Waiting for OBS playlist data"
         case "inactive": return "No active media — inactive policy applied"
+        case "playlist_looping": return "Playlist is looping"
         case "unknown_remaining": return "Remaining time unknown — countdown not running"
         case "pending": return "Waiting to send to Ontime"
         case "dry_run": return "Dry run — no changes sent to Ontime"

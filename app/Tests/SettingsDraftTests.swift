@@ -18,6 +18,19 @@ struct SettingsDraftTests {
         assert(MediaMessageTemplate.preview("{current_file} · {remaining_hhmmss} · {playlist_remaining_hhmmss}", state: live) == "żółć.mp4 · 00:00:00 · --:--")
         assert(MediaMessageTemplate.preview("{{{current_file}}}", state: live) == "{żółć.mp4}")
         assert(MediaMessageTemplate.preview("{current_file}", state: [:]) == "intro.mp4")
+        var state: [String: Any] = ["available": true, "current_file": "clip.mp4", "remaining_ms": 0,
+                                    "playlist_remaining_ms": 0, "shuffle": true]
+        for looping in [false, true, false] {
+            state["loop"] = looping
+            let playlist = looping ? "--:--" : "00:00:00"
+            assert(MediaMessageTemplate.preview("Live {current_file} {remaining_hhmmss} {playlist_remaining_hhmmss}", state: state) == "Live clip.mp4 00:00:00 " + playlist)
+            let summary = MediaMessageTemplate.remainingSummary(state)
+            assert(summary.contains("file 00:00:00"))
+            assert(summary.contains("playlist") == !looping)
+        }
+        state.removeValue(forKey: "playlist_remaining_ms")
+        assert(MediaMessageTemplate.preview("{playlist_remaining_hhmmss}", state: state) == "--:--")
+
     }
 
     static func testMediaConfigValidation() throws {

@@ -31,7 +31,10 @@ all Ontime changes, including stop/pause and messages, but does not suppress TXT
 ## Time and recovery
 
 - Times come from MPS, account for speed and freeze during pause. Playlist means
-  the current pass, even with Loop enabled.
+  the current pass in Vendor API. VOS hides playlist remaining time while Loop
+  is enabled; playlist timers apply their stop/keep_last policy and show
+  **Playlist is looping**. The message variable becomes `--:--`. Current-file
+  time stays available; Shuffle without Loop still shows playlist time.
 - Unknown time is never zero: messages show `--:--`; auxiliary output follows its
   stop/pause inactive policy. Known filenames can still be displayed.
 - Source changes/reconnects invalidate old data until a fresh snapshot arrives.
@@ -182,7 +185,7 @@ through heartbeat; serial timeouts may delay later slots but do not create extra
 workers or OBS connections.
 
 Manual acceptance: configure Aux1=Current file and Aux2=Whole playlist, then
-verify next/seek/speed, Shuffle+Loop (current pass only), several-minute pause
+verify next/seek/speed, Shuffle, Loop OFF→ON→OFF (playlist hidden/inactive during Loop), several-minute pause
 and resume, unknown future URL duration, independent failures and policies,
 normal close/restart and separate SIGKILL recovery, Secondary Message and one
 Stage display selection. Also repeat Program/Preview break automation, POST auth

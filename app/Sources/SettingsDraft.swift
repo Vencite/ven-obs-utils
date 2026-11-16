@@ -145,11 +145,16 @@ enum MediaMessageTemplate {
         return String(format: "%02lld:%02lld:%02lld", seconds / 3600, seconds / 60 % 60, seconds % 60)
     }
 
+    static func remainingSummary(_ state: [String: Any]) -> String {
+        let file = "Remaining: file " + time(state["remaining_ms"])
+        return state["loop"] as? Bool == true ? file : file + " · playlist " + time(state["playlist_remaining_ms"])
+    }
+
     static func preview(_ template: String, state: [String: Any]) -> String {
         let live = state["available"] as? Bool == true
         let values = ["current_file": live ? (state["current_file"] as? String ?? "—") : "intro.mp4",
                       "remaining_hhmmss": live ? time(state["remaining_ms"]) : "00:00:45",
-                      "playlist_remaining_hhmmss": live ? time(state["playlist_remaining_ms"]) : "00:12:30"]
+                      "playlist_remaining_hhmmss": live ? time(state["loop"] as? Bool == true ? nil : state["playlist_remaining_ms"]) : "00:12:30"]
         let chars = Array(template)
         var result = ""
         var i = 0

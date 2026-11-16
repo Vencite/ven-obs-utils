@@ -197,6 +197,9 @@ struct SettingsWindowLayoutTests {
         precondition(appliedRows[0].status.stringValue.contains("pending"))
         applied.updateMediaStatus([:], output: "Synced", outputs: output)
         precondition(appliedRows[0].status.stringValue == "Aux 1: synced")
+        applied.updateMediaStatus(["available": true, "loop": true], output: "Playlist is looping", outputs: ["auxiliary_timers": [["aux_timer_index": 1, "output_status": "playlist_looping"]]])
+        precondition(appliedRows[0].status.stringValue == "Aux 1: Playlist is looping")
+
         applied.close()
     }
 

@@ -70,13 +70,13 @@ class MultiTimerTests(unittest.TestCase):
         self.assertEqual(self.fake.calls, ['/api/poll'])
         self.assertEqual(self.statuses()[3]['output_status'], 'disabled')
 
-    def test_next_seek_speed_shuffle_loop(self):
+    def test_next_seek_speed_shuffle(self):
         self.send()
         for revision, values in enumerate([
                 {'current_item_id': 'next', 'remaining_ms': 6000, 'playlist_remaining_ms': 8000},
                 {'remaining_ms': 1000, 'playlist_remaining_ms': 3000},
                 {'speed_percent': 200, 'remaining_ms': 500, 'playlist_remaining_ms': 1500},
-                {'shuffle': True, 'loop': True, 'remaining_ms': 2000, 'playlist_remaining_ms': 4000}], 2):
+                {'shuffle': True, 'loop': False, 'remaining_ms': 2000, 'playlist_remaining_ms': 4000}], 2):
             self.send(snapshot(snapshot_revision=revision, **values))
             self.assertEqual(self.fake.slots[1].timer['current'], values['remaining_ms'])
             self.assertEqual(self.fake.slots[2].timer['current'], values['playlist_remaining_ms'])

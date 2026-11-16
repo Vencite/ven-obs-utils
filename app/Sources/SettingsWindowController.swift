@@ -490,7 +490,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
             }
             let current = states.first { $0["aux_timer_index"] as? Int == index }
             let status = row.enabled.state == .off ? "disabled" : current?["output_status"] as? String ?? (outputState["output_status"] as? String == "unavailable" ? "unavailable" : "pending")
-            let label = status == "unknown_remaining" ? "waiting for known duration" : status.replacingOccurrences(of: "_", with: " ")
+            let label = status == "playlist_looping" ? "Playlist is looping" : status == "unknown_remaining" ? "waiting for known duration" : status.replacingOccurrences(of: "_", with: " ")
             row.status.stringValue = "Aux \(index): " + label +
                 ((current?["output_error"] as? String).map { " — " + $0.replacingOccurrences(of: "_", with: " ") } ?? "")
             row.status.textColor = status == "error" ? .systemRed : .secondaryLabelColor
