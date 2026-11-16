@@ -40,8 +40,9 @@ jobs:
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
           echo "version=${TAG#v}" >> "$GITHUB_OUTPUT"
 
-      - name: Run backend tests
-        run: python3 -m unittest discover -s tests -v
+      - name: Run all Python and Swift tests
+        timeout-minutes: 15
+        run: ./test.sh
 
       - name: Build app
         env:

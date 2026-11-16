@@ -47,8 +47,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var logURL: URL { supportDirectory.appendingPathComponent("ven-obs-utils.log") }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        let version = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "?"
-        appendLog("startup version=\(version)")
+        let version = Bundle.main.infoDictionary?["CFBundleGetInfoString"] as? String
+            ?? Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "?"
+        let commit = Bundle.main.infoDictionary?["VENDevelopCommit"] as? String ?? ""
+        appendLog("startup version=\(version) commit=\(commit)")
         NSApp.setActivationPolicy(.accessory)
         setupMenu()
         setupOBSCallbacks()
@@ -120,7 +122,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
         setIcon(state: .warning, tooltip: appName)
 
-        let version = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "?"
+        let version = Bundle.main.infoDictionary?["CFBundleGetInfoString"] as? String
+            ?? Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "?"
         let menu = NSMenu()
         let header = NSMenuItem(title: "\(appName)  \(version)", action: nil, keyEquivalent: "")
         header.isEnabled = false

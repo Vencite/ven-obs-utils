@@ -86,8 +86,20 @@ manually running helper using port `8765` first.
 python3 -m unittest discover -s tests -v
 ```
 
-Backend tests use a local fake Ontime server. CI also runs Swift/AppKit tests and
-builds the macOS application. Automated checks do not replace live setup testing.
+Backend tests use a local fake Ontime server. On macOS, `./test.sh` runs the full
+Python and Swift/AppKit suite. Both Tests (push/pull_request) and Release DMG use
+this same required suite before building; a failure prevents publication.
+Automated checks do not replace live setup testing.
+
+Develop builds show `0.2.0 (develop <short SHA>)` in the menu and log. The base
+version comes from `.github/RELEASE_VERSION` (still `v0.2.0`); the complete commit
+is stored in `Info.plist` as `VENDevelopCommit` and logged at startup.
+`CFBundleShortVersionString` stays numeric, and `CFBundleVersion` remains `1`.
+`VERSION=1.2.3 ./build_app.sh` still builds that production version; a semver
+prerelease suffix is shown in the label while the Apple short version uses its
+numeric core. Local default builds on develop identify the current HEAD; CI
+explicitly stamps its tested SHA. Uncommitted local edits are not represented by
+HEAD, so use CI artifacts when identifying a tested build.
 
 ## Manual HTTP triggers
 

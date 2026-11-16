@@ -5,7 +5,27 @@ ROOT="$(cd "$(dirname "$0")" && pwd)"
 APP_NAME="VEN OBS Utils"
 EXECUTABLE="VENOBSUtils"
 BUNDLE_ID="works.ven.obs-utils"
-VERSION="${VERSION:-0.1.0}"
+DEVELOP_SHA="${DEVELOP_SHA:-}"
+if [[ -z "${VERSION:-}" && -z "$DEVELOP_SHA" ]] &&
+   [[ "$(git -C "$ROOT" branch --show-current 2>/dev/null || true)" == "develop" ]]; then
+  DEVELOP_SHA="$(git -C "$ROOT" rev-parse HEAD)"
+fi
+VERSION="${VERSION:-$(tr -d '[:space:]' < "$ROOT/.github/RELEASE_VERSION")}"
+VERSION="${VERSION#v}"
+if [[ "$VERSION" =~ ^([0-9]+)\.([0-9]+)\.([0-9]+)([-+][0-9A-Za-z.+-]+)?$ ]]; then
+  SHORT_VERSION="${BASH_REMATCH[1]}.${BASH_REMATCH[2]}.${BASH_REMATCH[3]}"
+else
+  echo "ERROR: VERSION must be a semantic version" >&2
+  exit 1
+fi
+BUILD_LABEL="$VERSION"
+if [[ -n "$DEVELOP_SHA" ]]; then
+  if [[ ! "$DEVELOP_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+    echo "ERROR: DEVELOP_SHA must be a full Git commit SHA" >&2
+    exit 1
+  fi
+  BUILD_LABEL="$VERSION (develop ${DEVELOP_SHA:0:12})"
+fi
 BUILD_DIR="$ROOT/build"
 APP="$BUILD_DIR/$APP_NAME.app"
 CONTENTS="$APP/Contents"
@@ -46,7 +66,9 @@ cat > "$CONTENTS/Info.plist" <<EOF
   <key>CFBundleName</key><string>$APP_NAME</string>
   <key>CFBundleDisplayName</key><string>$APP_NAME</string>
   <key>CFBundlePackageType</key><string>APPL</string>
-  <key>CFBundleShortVersionString</key><string>$VERSION</string>
+  <key>CFBundleShortVersionString</key><string>$SHORT_VERSION</string>
+  <key>CFBundleGetInfoString</key><string>$BUILD_LABEL</string>
+  <key>VENDevelopCommit</key><string>$DEVELOP_SHA</string>
   <key>CFBundleVersion</key><string>1</string>
   <key>LSMinimumSystemVersion</key><string>13.0</string>
   <key>LSUIElement</key><true/>
@@ -60,5 +82,5 @@ EOF
 codesign --force --deep --sign - "$APP" >/dev/null
 
 echo "Built: $APP"
-echo "Version: $VERSION"
+echo "Version: $BUILD_LABEL"
 echo "Run:   open '$APP'"
