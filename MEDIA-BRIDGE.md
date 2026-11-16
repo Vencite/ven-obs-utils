@@ -187,3 +187,30 @@ and resume, unknown future URL duration, independent failures and policies,
 normal close/restart and separate SIGKILL recovery, Secondary Message and one
 Stage display selection. Also repeat Program/Preview break automation, POST auth
 and Dry Run on a test rundown. CI/fakes do not establish live acceptance.
+
+## RC follow-up: journal transactions and unapplied edits
+
+A failed write or file fsync before `os.replace` leaves the confirmed journal
+set unchanged: a failed Aux2 acquisition cannot appear later when Aux1 is released.
+A directory fsync failure after replacement is different: its intent is retained
+separately as uncertain, with `journal_uncertain_indices` in helper status and
+`journal_durability_unknown` on the affected output. No first mutation is sent.
+Subsequent durable updates preserve the union of confirmed and unresolved intents;
+a release of another slot cannot erase them. Restart treats retained entries
+conservatively, including the legacy single-index format. Journal entries are
+intent/recovery records; actual in-process control remains separate per slot.
+
+Settings rows compare their normalized slot, source, policy and enabled state
+with the configuration active when the window opened. Edited/new rows say
+**Not applied yet**, even if a different active row on that slot is synced.
+Reverting restores the current status; Cancel applies nothing. Save & Reconnect
+creates the new active configuration and the normal unavailable/pending/synced
+sequence, without claiming local cancellation can undo an Ontime action.
+
+The serial worker is retained. Tests use event gates and a fake clock for 1–3 s
+responses, repeated slow requests, timeouts, newer telemetry/session changes and
+close during a request. Status and IPC ingestion never wait on the output HTTP
+lock. One slot's error does not permanently block another; finite transport
+request_timeout_seconds still bounds each request, so a batch can take up to its
+number of requests times that timeout. This is a per-request bound, not an
+unconditional hard wall-clock deadline for an entire batch/network peer.

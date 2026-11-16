@@ -194,9 +194,14 @@ def _atomic_write(path: str, text: str) -> None:
             handle.flush()
             os.fsync(handle.fileno())
         os.replace(temporary, target)
+        temporary = None
     finally:
         if temporary and os.path.exists(temporary):
             os.unlink(temporary)
+
+
+class JournalDurabilityUnknown(OSError):
+    """The visible journal changed, but its directory commit was not confirmed."""
 
 
 def _clock(ms: int | None) -> str:
@@ -242,6 +247,7 @@ class MediaBridge:
         self._message_due: float | None = None
         self._timers = {i: {"owned": False, "signature": None, "state": None, "error": None} for i in (1, 2, 3)}
         self._journal_slots: set[int] = set()
+        self._journal_uncertain: set[int] = set()
         self._poll_cache = None
         self._secondary_selected = False
         self._message_error = None
@@ -347,21 +353,41 @@ class MediaBridge:
                 _atomic_write(str(self._ownership_path), json.dumps({"target": self._target_id, "indices": sorted(slots)}))
             else:
                 self._ownership_path.unlink(missing_ok=True)
-            directory = os.open(self._ownership_path.parent, os.O_RDONLY)
             try:
-                os.fsync(directory)
-            finally:
-                os.close(directory)
+                directory = os.open(self._ownership_path.parent, os.O_RDONLY)
+                try:
+                    os.fsync(directory)
+                finally:
+                    os.close(directory)
+            except OSError as exc:
+                raise JournalDurabilityUnknown("journal_durability_unknown") from exc
 
     def _save_ownership(self, index: int) -> None:
-        # Retain uncertain write intents in memory even if rename/fsync fails.
-        self._journal_slots.add(index)
-        self._persist_ownership(self._journal_slots)
+        candidate = self._journal_slots | self._journal_uncertain | {index}
+        try:
+            self._persist_ownership(candidate)
+        except JournalDurabilityUnknown:
+            with self._lock:
+                self._journal_uncertain |= candidate - self._journal_slots
+            raise ValueError("journal_durability_unknown")
+        except OSError as exc:
+            raise ValueError("journal_write_failed") from exc
+        with self._lock:
+            self._journal_slots = candidate
+            self._journal_uncertain.clear()
 
     def _clear_ownership(self, index: int) -> None:
-        remaining = self._journal_slots - {index}
-        self._persist_ownership(remaining)
-        self._journal_slots = remaining
+        remaining = (self._journal_slots | self._journal_uncertain) - {index}
+        try:
+            self._persist_ownership(remaining)
+        except JournalDurabilityUnknown:
+            # Neither a failed directory fsync nor a visible unlink proves rollback.
+            raise ValueError("journal_durability_unknown")
+        except OSError as exc:
+            raise ValueError("journal_write_failed") from exc
+        with self._lock:
+            self._journal_slots = remaining
+            self._journal_uncertain.clear()
 
     def _poll(self) -> dict:
         if self._poll_cache is None:
@@ -411,6 +437,7 @@ class MediaBridge:
         with self._lock:
             self._expire_locked()
             state = copy.deepcopy(self._snapshot)
+            state["journal_uncertain_indices"] = sorted(self._journal_uncertain)
             if not private:
                 state.pop("current_path", None)
             if self._recovery:

@@ -250,12 +250,14 @@ class MultiTimerTests(unittest.TestCase):
         self.assertFalse(self.path.exists())
 
     def test_uncertain_durable_write_is_preserved_when_next_slot_starts(self):
-        persist = self.bridge._persist_ownership
-        def uncertain(slots):
-            persist(slots)
-            if slots == {1}:
-                raise OSError('simulated failure after replace')
-        with patch.object(self.bridge, '_persist_ownership', side_effect=uncertain):
+        import os
+        import stat
+        fsync = os.fsync
+        def uncertain(fd):
+            if stat.S_ISDIR(os.fstat(fd).st_mode) and json.loads(self.path.read_text())['indices'] == [1]:
+                raise OSError('directory fsync after replace')
+            fsync(fd)
+        with patch('media_bridge.os.fsync', side_effect=uncertain):
             self.send()
         self.assertEqual(json.loads(self.path.read_text())['indices'], [1, 2])
         self.assertEqual(self.fake.slots[1].timer['playback'], 'stop')
