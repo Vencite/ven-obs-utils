@@ -2,6 +2,63 @@ import AppKit
 import UniformTypeIdentifiers
 
 @MainActor
+final class AuxiliaryTimerRow: NSStackView {
+    let enabled = NSButton(checkboxWithTitle: "Enabled", target: nil, action: nil)
+    let slot = NSPopUpButton(frame: .zero, pullsDown: false)
+    let source = NSPopUpButton(frame: .zero, pullsDown: false)
+    let policy = NSPopUpButton(frame: .zero, pullsDown: false)
+    let status = NSTextField(wrappingLabelWithString: "Waiting for status")
+    var onRemove: (() -> Void)?
+    var onChange: (() -> Void)?
+    private var original: [String: Any]
+
+    init(_ value: [String: Any]) {
+        original = value
+        super.init(frame: .zero)
+        orientation = .vertical
+        alignment = .leading
+        spacing = 6
+        let controls = NSStackView()
+        controls.orientation = .horizontal
+        controls.spacing = 8
+        slot.addItems(withTitles: ["Aux 1", "Aux 2", "Aux 3"])
+        source.addItems(withTitles: ["Current file", "Whole playlist — current pass"])
+        policy.addItems(withTitles: ["Stop", "Keep last"])
+        slot.setAccessibilityLabel("Ontime auxiliary slot")
+        source.setAccessibilityLabel("Auxiliary time source")
+        policy.setAccessibilityLabel("Auxiliary unavailable policy")
+        let remove = NSButton(title: "Remove", target: self, action: #selector(removeRow))
+        for item in [enabled, slot, source, policy, remove] as [NSView] { controls.addArrangedSubview(item) }
+        addArrangedSubview(controls)
+        status.font = .systemFont(ofSize: 12)
+        addArrangedSubview(status)
+        enabled.state = value["enabled"] as? Bool == false ? .off : .on
+        slot.selectItem(at: min(2, max(0, (value["aux_timer_index"] as? Int ?? 1) - 1)))
+        source.selectItem(at: value["media_timer_source"] as? String == "playlist" ? 1 : 0)
+        policy.selectItem(at: value["inactive_policy"] as? String == "keep_last" ? 1 : 0)
+        for control in [enabled, slot, source, policy] as [NSControl] {
+            control.target = self
+            control.action = #selector(changed)
+        }
+        changed()
+    }
+    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+    var value: [String: Any] {
+        var result = original
+        result["enabled"] = enabled.state == .on
+        result["aux_timer_index"] = slot.indexOfSelectedItem + 1
+        result["media_timer_source"] = source.indexOfSelectedItem == 0 ? "current_item" : "playlist"
+        result["inactive_policy"] = policy.indexOfSelectedItem == 0 ? "stop" : "keep_last"
+        return result
+    }
+    @objc private func changed() {
+        for control in [slot, source, policy] { control.isEnabled = enabled.state == .on }
+        onChange?()
+    }
+    @objc private func removeRow() { onRemove?() }
+}
+
+@MainActor
 final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTextFieldDelegate {
     typealias SaveHandler = (SettingsDraft) throws -> Void
     private let initialDraft: SettingsDraft
@@ -31,20 +88,20 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
     private let txtEnabled = NSButton(checkboxWithTitle: "Export current filename to a text file", target: nil, action: nil)
     private let txtPath = NSTextField()
     private let txtPolicy = NSPopUpButton(frame: .zero, pullsDown: false)
-    private let timerEnabled = NSButton(checkboxWithTitle: "Send media time to Ontime", target: nil, action: nil)
-    private let timerSource = NSPopUpButton(frame: .zero, pullsDown: false)
-    private let timerOutput = NSPopUpButton(frame: .zero, pullsDown: false)
-    private let auxIndex = NSPopUpButton(frame: .zero, pullsDown: false)
+    private let timerEnabled = NSButton(checkboxWithTitle: "Send a secondary message", target: nil, action: nil)
     private let inactivePolicy = NSPopUpButton(frame: .zero, pullsDown: false)
     private let secondaryTemplate = NSTextField()
     private let insertVariable = NSPopUpButton(frame: .zero, pullsDown: false)
     private let messagePreview = NSTextField(wrappingLabelWithString: "")
-    private let selectSecondary = NSButton(checkboxWithTitle: "Show this output in Stage Timer’s secondary area", target: nil, action: nil)
+    private let stageSource = NSPopUpButton(frame: .zero, pullsDown: false)
+    private let stageBody = NSStackView()
+    private let addTimerButton = NSButton(title: "Add timer", target: nil, action: nil)
+    private var timerRows: [AuxiliaryTimerRow] = []
+    private var outputState: [String: Any] = [:]
     private let outputStatus = NSTextField(wrappingLabelWithString: "Output status will appear after saving.")
     private let mediaBody = NSStackView()
     private let explicitBody = NSStackView()
     private let txtBody = NSStackView()
-    private var timerSourceRow: NSView?
     private let timerBody = NSStackView()
     private let auxBody = NSStackView()
     private let messageBody = NSStackView()
@@ -227,13 +284,9 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
         txtBody.addArrangedSubview(txtPolicy)
         mediaBody.addArrangedSubview(card("Filename export", "Use the current filename in an OBS text source or another application.", [txtEnabled, txtBody]))
 
-        timerSource.addItems(withTitles: ["Whole playlist — current pass", "Current file"])
-        timerOutput.addItems(withTitles: ["Auxiliary countdown timer", "Secondary text message"])
-        timerOutput.target = self
-        timerOutput.action = #selector(optionsChanged)
-        auxIndex.addItems(withTitles: ["Timer 1", "Timer 2", "Timer 3"])
-        auxBody.addArrangedSubview(row("Reserved slot", auxIndex))
-        auxBody.addArrangedSubview(note("Reserve this slot for VOS. VOS updates this auxiliary timer; it never advances the main rundown when media ends."))
+        addTimerButton.target = self
+        addTimerButton.action = #selector(addTimer)
+        mediaBody.addArrangedSubview(card("Auxiliary timers", "Reserve each enabled slot for VOS. Unknown durations remain unknown; media never advances the rundown.", [auxBody, addTimerButton]))
         secondaryTemplate.delegate = self
         secondaryTemplate.widthAnchor.constraint(equalToConstant: 520).isActive = true
         insertVariable.addItem(withTitle: "Insert variable…")
@@ -246,17 +299,18 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
         messageBody.addArrangedSubview(note("Preview — live values when available, otherwise an example:"))
         messageBody.addArrangedSubview(messagePreview)
         inactivePolicy.addItems(withTitles: ["Stop / clear when unavailable", "Pause / keep last value when unavailable"])
-        timerSourceRow = row("Time to send", timerSource)
-        timerBody.addArrangedSubview(timerSourceRow!)
-        timerBody.addArrangedSubview(row("Display as", timerOutput))
-        timerBody.addArrangedSubview(auxBody)
         timerBody.addArrangedSubview(messageBody)
-        timerBody.addArrangedSubview(selectSecondary)
-        timerBody.addArrangedSubview(note("This optional setting changes Ontime’s Stage Timer secondary area to the chosen timer or message. Otherwise choose it in Ontime yourself."))
         timerBody.addArrangedSubview(inactivePolicy)
+        mediaBody.addArrangedSubview(card("Secondary message", "Use the template independently of auxiliary timers.", [timerEnabled, timerBody]))
+        _ = stack(stageBody, spacing: 8)
+        stageSource.autoenablesItems = false
+        stageSource.addItems(withTitles: ["Do not change automatically", "Aux 1", "Aux 2", "Aux 3", "Secondary message"])
+        stageBody.addArrangedSubview(row("Stage Timer secondary area", stageSource))
+        stageBody.addArrangedSubview(note("Only this one selected source is shown. Otherwise choose it in Ontime."))
+        mediaBody.addArrangedSubview(stageBody)
         outputStatus.font = .systemFont(ofSize: 12)
         outputStatus.textColor = .secondaryLabelColor
-        mediaBody.addArrangedSubview(card("Ontime media output", "Unknown durations stay unknown. No guessed countdown is sent.", [timerEnabled, timerBody, outputStatus]))
+        mediaBody.addArrangedSubview(outputStatus)
         for button in [mediaEnabled, txtEnabled, timerEnabled] {
             button.target = self
             button.action = #selector(optionsChanged)
@@ -324,13 +378,12 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
         txtPolicy.selectItem(at: txt["clear_policy"] as? String == "keep_last" ? 1 : 0)
         let timer = media["timer"] as? [String: Any] ?? [:]
         let mode = timer["media_timer_source"] as? String ?? "off"
-        timerEnabled.state = mode == "off" ? .off : .on
-        timerSource.selectItem(at: mode == "current_item" ? 1 : 0)
-        timerOutput.selectItem(at: timer["ontime_output"] as? String == "secondary_message" ? 1 : 0)
-        auxIndex.selectItem(at: min(2, max(0, (timer["aux_timer_index"] as? Int ?? 1) - 1)))
+        timerEnabled.state = timer["ontime_output"] as? String == "secondary_message" && mode != "off" ? .on : .off
         inactivePolicy.selectItem(at: timer["inactive_policy"] as? String == "keep_last" ? 1 : 0)
         secondaryTemplate.stringValue = timer["secondary_message_template"] as? String ?? "{current_file} · {playlist_remaining_hhmmss}"
-        selectSecondary.state = timer["change_stage_timer_secondary_source"] as? Bool == true ? .on : .off
+        for value in AppConfig.auxiliaryTimers(in: media) { appendTimer(value) }
+        let selection = AppConfig.stageTimerSource(in: media)
+        stageSource.selectItem(at: ["off", "aux1", "aux2", "aux3", "secondary"].firstIndex(of: selection) ?? 0)
         optionsChanged()
     }
 
@@ -371,7 +424,9 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
         }
     }
 
-    func updateMediaStatus(_ state: [String: Any], output: String) {
+    func updateMediaStatus(_ state: [String: Any], output: String, outputs: [String: Any] = [:]) {
+        outputState = outputs
+        updateTimerStatuses()
         mediaState = state
         if state["available"] as? Bool == true {
             sourceStatus.stringValue = "Currently following: \(state["source_name"] as? String ?? "MPS") · \(state["current_file"] as? String ?? "No current file")"
@@ -386,10 +441,48 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
         explicitBody.isHidden = sourceMode.indexOfSelectedItem != 1
         txtBody.isHidden = txtEnabled.state != .on
         timerBody.isHidden = timerEnabled.state != .on
-        auxBody.isHidden = timerOutput.indexOfSelectedItem == 1
-        messageBody.isHidden = timerOutput.indexOfSelectedItem != 1
-        timerSourceRow?.isHidden = timerOutput.indexOfSelectedItem == 1
+        addTimerButton.isEnabled = timerRows.count < 3
+        let active = Set(timerRows.filter { $0.enabled.state == .on }.map { $0.slot.indexOfSelectedItem + 1 })
+        for index in 1...3 { stageSource.item(at: index)?.isEnabled = active.contains(index) }
+        stageSource.item(at: 4)?.isEnabled = timerEnabled.state == .on
+        if stageSource.indexOfSelectedItem > 0, stageSource.selectedItem?.isEnabled != true { stageSource.selectItem(at: 0) }
+        stageBody.isHidden = active.isEmpty && timerEnabled.state != .on
+        updateTimerStatuses()
         refreshPreview()
+    }
+
+    private func appendTimer(_ value: [String: Any]) {
+        let row = AuxiliaryTimerRow(value)
+        row.onRemove = { [weak self, weak row] in
+            guard let self, let row else { return }
+            self.timerRows.removeAll { $0 === row }
+            self.auxBody.removeArrangedSubview(row)
+            row.removeFromSuperview()
+            self.optionsChanged()
+        }
+        row.onChange = { [weak self] in self?.optionsChanged() }
+        timerRows.append(row)
+        auxBody.addArrangedSubview(row)
+    }
+
+    @objc private func addTimer() {
+        guard timerRows.count < 3 else { return }
+        let used = Set(timerRows.map { $0.slot.indexOfSelectedItem + 1 })
+        let index = (1...3).first { !used.contains($0) } ?? 1
+        appendTimer(["enabled": true, "aux_timer_index": index, "media_timer_source": "current_item", "inactive_policy": "stop"])
+        optionsChanged()
+    }
+
+    private func updateTimerStatuses() {
+        let states = outputState["auxiliary_timers"] as? [[String: Any]] ?? []
+        for row in timerRows {
+            let index = row.slot.indexOfSelectedItem + 1
+            let current = states.first { $0["aux_timer_index"] as? Int == index }
+            let status = row.enabled.state == .off ? "disabled" : current?["output_status"] as? String ?? (outputState["output_status"] as? String == "unavailable" ? "unavailable" : "pending")
+            row.status.stringValue = "Aux \(index): " + status.replacingOccurrences(of: "_", with: " ") +
+                ((current?["output_error"] as? String).map { " — " + $0.replacingOccurrences(of: "_", with: " ") } ?? "")
+            row.status.textColor = status == "error" ? .systemRed : .secondaryLabelColor
+        }
     }
 
     func controlTextDidChange(_ obj: Notification) { refreshPreview() }
@@ -464,12 +557,13 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
         txt["clear_policy"] = txtPolicy.indexOfSelectedItem == 1 ? "keep_last" : "clear_when_inactive"
         media["txt"] = txt
         var timer = media["timer"] as? [String: Any] ?? [:]
-        timer["media_timer_source"] = timerEnabled.state == .on ? (timerSource.indexOfSelectedItem == 1 ? "current_item" : "playlist") : "off"
-        timer["ontime_output"] = timerOutput.indexOfSelectedItem == 1 ? "secondary_message" : "auxiliary_timer"
-        timer["aux_timer_index"] = auxIndex.indexOfSelectedItem + 1
+        timer["media_timer_source"] = timerEnabled.state == .on ? "playlist" : "off"
+        timer["ontime_output"] = "secondary_message"
         timer["inactive_policy"] = inactivePolicy.indexOfSelectedItem == 1 ? "keep_last" : "stop"
         timer["secondary_message_template"] = secondaryTemplate.stringValue
-        timer["change_stage_timer_secondary_source"] = selectSecondary.state == .on
+        timer["change_stage_timer_secondary_source"] = false
+        media["auxiliary_timers"] = timerRows.map(\.value)
+        media["stage_timer_source"] = ["off", "aux1", "aux2", "aux3", "secondary"][max(0, stageSource.indexOfSelectedItem)]
         media["timer"] = timer
         media.removeValue(forKey: "http")
         draft.mediaBridge = media

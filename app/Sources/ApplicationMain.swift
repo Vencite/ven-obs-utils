@@ -222,7 +222,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         let output = MediaOutputPresentation.summary(latestMediaOutput)
         mediaOutputItem.title = "Media output: " + output
-        settingsController?.updateMediaStatus(state, output: output)
+        settingsController?.updateMediaStatus(state, output: output, outputs: latestMediaOutput)
     }
 
     private static func mediaTime(_ value: Any?) -> String {

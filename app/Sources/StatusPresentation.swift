@@ -36,6 +36,17 @@ enum MediaOutputPresentation {
     }
 
     static func summary(_ state: [String: Any]) -> String {
+        if let rows = state["auxiliary_timers"] as? [[String: Any]], !rows.isEmpty {
+            var parts = rows.map { row -> String in
+                let index = row["aux_timer_index"] as? Int ?? 0
+                let status = row["output_status"] as? String ?? "pending"
+                let label = status == "unknown_remaining" ? "waiting for known duration" : status == "waiting_for_snapshot" ? "waiting for MPS" : status.replacingOccurrences(of: "_", with: " ")
+                return "Aux \(index): " + label
+            }
+            if let message = state["secondary_message_status"] as? String { parts.append("Message: " + message.replacingOccurrences(of: "_", with: " ")) }
+            if let error = state["output_error"] as? String { parts.append("Error: " + error.replacingOccurrences(of: "_", with: " ")) }
+            return parts.joined(separator: " · ")
+        }
         let status = state["output_status"] as? String ?? "waiting_for_snapshot"
         if let error = state["output_error"] as? String, !error.isEmpty {
             if error.hasPrefix("ontime_http_") {

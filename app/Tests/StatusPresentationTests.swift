@@ -40,6 +40,11 @@ struct StatusPresentationTests {
         assert(MediaOutputPresentation.summary(["output_status": "pending"]).contains("Waiting"))
         assert(MediaOutputPresentation.summary(["output_status": "connected"]).contains("confirmation"))
         assert(MediaOutputPresentation.summary(["output_status": "synced"]) == "Auxiliary timer updated")
+        let multi = MediaOutputPresentation.summary(["auxiliary_timers": [
+            ["aux_timer_index": 1, "output_status": "synced"],
+            ["aux_timer_index": 2, "output_status": "unknown_remaining"],
+            ["aux_timer_index": 3, "output_status": "disabled"]]])
+        assert(multi.contains("Aux 1: synced") && multi.contains("Aux 2: waiting for known duration") && multi.contains("Aux 3: disabled"))
         print("StatusPresentationTests: PASS")
     }
 }

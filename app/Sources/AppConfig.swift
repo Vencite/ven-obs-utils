@@ -119,6 +119,24 @@ struct AppConfig {
         )
     }
 
+    static func auxiliaryTimers(in media: [String: Any]) -> [[String: Any]] {
+        if media["auxiliary_timers"] != nil { return media["auxiliary_timers"] as? [[String: Any]] ?? [] }
+        let timer = media["timer"] as? [String: Any] ?? [:]
+        guard timer["ontime_output"] as? String ?? "auxiliary_timer" == "auxiliary_timer",
+              timer["media_timer_source"] as? String ?? "off" != "off" else { return [] }
+        return [["enabled": true, "aux_timer_index": timer["aux_timer_index"] ?? 1,
+                 "media_timer_source": timer["media_timer_source"] ?? "playlist",
+                 "inactive_policy": timer["inactive_policy"] ?? "stop"]]
+    }
+
+    static func stageTimerSource(in media: [String: Any]) -> String {
+        if let selected = media["stage_timer_source"] as? String { return selected }
+        let timer = media["timer"] as? [String: Any] ?? [:]
+        guard timer["change_stage_timer_secondary_source"] as? Bool == true,
+              timer["media_timer_source"] as? String ?? "off" != "off" else { return "off" }
+        return timer["ontime_output"] as? String == "secondary_message" ? "secondary" : "aux\(timer["aux_timer_index"] as? Int ?? 1)"
+    }
+
     func validated() throws -> AppConfig {
         let trimmedOntime = ontimeBaseURL.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedOntime.isEmpty,
@@ -164,7 +182,8 @@ struct AppConfig {
                 throw ConfigValidationError.invalid("Invalid media \(section) configuration")
             }
         }
-        for (section, key) in [("txt", "enabled"), ("json", "enabled"), ("timer", "change_stage_timer_secondary_source")] {
+        let toggles = [("txt", "enabled"), ("json", "enabled")] + (media["auxiliary_timers"] == nil ? [("timer", "change_stage_timer_secondary_source")] : [])
+        for (section, key) in toggles {
             if let value = (media[section] as? [String: Any])?[key], !Self.isBoolean(value) {
                 throw ConfigValidationError.invalid("Media toggles must be booleans")
             }
@@ -202,31 +221,77 @@ struct AppConfig {
                txt["path"] as? String == json["path"] as? String {
                 throw ConfigValidationError.invalid("TXT and JSON export paths must differ")
             }
+            if let value = txt["clear_policy"], !(value is String) {
+                throw ConfigValidationError.invalid("Invalid TXT policy")
+            }
+            guard ["clear_when_inactive", "keep_last"].contains(txt["clear_policy"] as? String ?? "clear_when_inactive") else {
+                throw ConfigValidationError.invalid("Invalid TXT policy")
+            }
             let timer = media["timer"] as? [String: Any] ?? [:]
-            for (section, keys) in [(timer, ["media_timer_source", "ontime_output", "inactive_policy", "secondary_message_template"]),
-                                    (txt, ["clear_policy"])] {
-                for key in keys {
-                    if let value = section[key], !(value is String) {
-                        throw ConfigValidationError.invalid("Invalid media setting type")
+            let validateTimer = media["auxiliary_timers"] == nil || (timer["ontime_output"] as? String == "secondary_message" && (timer["media_timer_source"] as? String ?? "invalid") != "off")
+            if validateTimer {
+                for (section, keys) in [(timer, ["media_timer_source", "ontime_output", "inactive_policy", "secondary_message_template"]),
+                                        (txt, ["clear_policy"])] {
+                    for key in keys {
+                        if let value = section[key], !(value is String) {
+                            throw ConfigValidationError.invalid("Invalid media setting type")
+                        }
                     }
                 }
-            }
-            if let value = timer["aux_timer_index"] {
-                guard !Self.isBoolean(value), let number = value as? NSNumber,
-                      String(cString: number.objCType) != "d", String(cString: number.objCType) != "f",
-                      number.doubleValue == Double(number.intValue), (1...3).contains(number.intValue) else {
-                    throw ConfigValidationError.invalid("Invalid auxiliary timer index")
+                if let value = timer["aux_timer_index"] {
+                    guard !Self.isBoolean(value), let number = value as? NSNumber,
+                          String(cString: number.objCType) != "d", String(cString: number.objCType) != "f",
+                          number.doubleValue == Double(number.intValue), (1...3).contains(number.intValue) else {
+                        throw ConfigValidationError.invalid("Invalid auxiliary timer index")
+                    }
+                }
+                guard Self.validMediaTemplate(timer["secondary_message_template"] as? String ?? "{current_file}") else {
+                    throw ConfigValidationError.invalid("Invalid media message template")
+                }
+                guard ["off", "current_item", "playlist"].contains(timer["media_timer_source"] as? String ?? "off"),
+                      ["auxiliary_timer", "secondary_message"].contains(timer["ontime_output"] as? String ?? "auxiliary_timer"),
+                      (1...3).contains(timer["aux_timer_index"] as? Int ?? 1),
+                      ["stop", "keep_last"].contains(timer["inactive_policy"] as? String ?? "stop"),
+                      ["clear_when_inactive", "keep_last"].contains(txt["clear_policy"] as? String ?? "clear_when_inactive") else {
+                    throw ConfigValidationError.invalid("Invalid media timer or TXT policy")
                 }
             }
-            guard Self.validMediaTemplate(timer["secondary_message_template"] as? String ?? "{current_file}") else {
-                throw ConfigValidationError.invalid("Invalid media message template")
+        }
+        if let value = media["auxiliary_timers"] {
+            guard let rows = value as? [[String: Any]], rows.count <= 3 else {
+                throw ConfigValidationError.invalid("At most three auxiliary timers are allowed")
             }
-            guard ["off", "current_item", "playlist"].contains(timer["media_timer_source"] as? String ?? "off"),
-                  ["auxiliary_timer", "secondary_message"].contains(timer["ontime_output"] as? String ?? "auxiliary_timer"),
-                  (1...3).contains(timer["aux_timer_index"] as? Int ?? 1),
-                  ["stop", "keep_last"].contains(timer["inactive_policy"] as? String ?? "stop"),
-                  ["clear_when_inactive", "keep_last"].contains(txt["clear_policy"] as? String ?? "clear_when_inactive") else {
-                throw ConfigValidationError.invalid("Invalid media timer or TXT policy")
+            var slots = Set<Int>()
+            for row in rows {
+                if let enabled = row["enabled"], !Self.isBoolean(enabled) {
+                    throw ConfigValidationError.invalid("Timer enabled must be a boolean")
+                }
+                if row["enabled"] as? Bool == false { continue }
+                guard let value = row["aux_timer_index"], !Self.isBoolean(value),
+                      let number = value as? NSNumber, String(cString: number.objCType) != "d",
+                      String(cString: number.objCType) != "f", let index = row["aux_timer_index"] as? Int,
+                      (1...3).contains(index), slots.insert(index).inserted,
+                      let mode = row["media_timer_source"] as? String, ["current_item", "playlist"].contains(mode),
+                      row["inactive_policy"] == nil || row["inactive_policy"] is String,
+                      ["stop", "keep_last"].contains(row["inactive_policy"] as? String ?? "stop") else {
+                    throw ConfigValidationError.invalid("Invalid timer settings or duplicate auxiliary slot")
+                }
+            }
+        }
+        if let value = media["stage_timer_source"] {
+            guard let selected = value as? String, ["off", "aux1", "aux2", "aux3", "secondary"].contains(selected) else {
+                throw ConfigValidationError.invalid("Invalid Stage Timer display source")
+            }
+            let timer = media["timer"] as? [String: Any] ?? [:]
+            if selected == "secondary" {
+                guard timer["ontime_output"] as? String == "secondary_message", timer["media_timer_source"] as? String ?? "off" != "off" else {
+                    throw ConfigValidationError.invalid("Enable the selected Stage Timer output")
+                }
+            } else if selected.hasPrefix("aux") {
+                let index = Int(String(selected.suffix(1)))!
+                guard Self.auxiliaryTimers(in: media).contains(where: { $0["enabled"] as? Bool != false && ($0["aux_timer_index"] as? Int ?? 1) == index }) else {
+                    throw ConfigValidationError.invalid("Enable the selected Stage Timer output")
+                }
             }
         }
         return self
@@ -235,6 +300,13 @@ struct AppConfig {
     func writeAtomically(to url: URL) throws {
         _ = try validated()
 
+        if (rawRoot["media_bridge"] as? [String: Any])?["auxiliary_timers"] == nil,
+           mediaBridge["auxiliary_timers"] != nil, FileManager.default.fileExists(atPath: url.path) {
+            let backup = url.appendingPathExtension("backup")
+            if !FileManager.default.fileExists(atPath: backup.path) {
+                try Data(contentsOf: url).write(to: backup, options: .atomic)
+            }
+        }
         var root = rawRoot
         root["config_version"] = Self.currentConfigVersion
         var media = mediaBridge

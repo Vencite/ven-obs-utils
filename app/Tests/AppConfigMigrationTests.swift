@@ -3,12 +3,70 @@ import Foundation
 @main
 struct AppConfigMigrationTests {
     static func main() throws {
+        try testSharedTimerValidationFixtures()
+        try testMultiTimerMigrationAndValidation()
         try testMediaValidation()
         try testLegacyConfigIsMigratedWithBackup()
         try testCurrentConfigIsLeftUntouched()
         try testLoadAutomaticallyMigratesLegacyConfig()
         try testVersionTwoMediaConfigPreservesOutputs()
         print("AppConfigMigrationTests: PASS")
+    }
+
+    static func testSharedTimerValidationFixtures() throws {
+        let fixture = URL(fileURLWithPath: FileManager.default.currentDirectoryPath).appendingPathComponent("tests/fixtures/media_timer_configs.json")
+        let cases = try JSONSerialization.jsonObject(with: Data(contentsOf: fixture)) as! [[String: Any]]
+        let path = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: path) }
+        for test in cases {
+            let root: [String: Any] = ["config_version": 3, "ontime": ["base_url": "http://localhost:4001"], "media_bridge": test["media"]!]
+            try JSONSerialization.data(withJSONObject: root).write(to: path)
+            var accepted = false
+            do { _ = try AppConfig.load(from: path).validated(); accepted = true } catch {}
+            assert(accepted == (test["valid"] as? Bool), "Swift/Python validation mismatch: \(test["name"]!)")
+        }
+    }
+
+    static func testMultiTimerMigrationAndValidation() throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let path = dir.appendingPathComponent("config.json")
+        let root: [String: Any] = ["config_version": 3, "ontime": ["base_url": "http://localhost:4001"], "custom": "keep",
+            "media_bridge": ["enabled": true, "timer": ["media_timer_source": "playlist", "aux_timer_index": 2,
+                "inactive_policy": "keep_last", "change_stage_timer_secondary_source": true,
+                "secondary_message_template": "{current_file}"]]]
+        let original = try JSONSerialization.data(withJSONObject: root)
+        try original.write(to: path)
+        var config = try AppConfig.load(from: path)
+        let rows = AppConfig.auxiliaryTimers(in: config.mediaBridge)
+        assert(rows.count == 1 && rows[0]["aux_timer_index"] as? Int == 2)
+        assert(rows[0]["inactive_policy"] as? String == "keep_last")
+        assert(AppConfig.stageTimerSource(in: config.mediaBridge) == "aux2")
+        let unchanged = try Data(contentsOf: path)
+        assert(unchanged == original)
+        config.mediaBridge["auxiliary_timers"] = rows
+        config.mediaBridge["stage_timer_source"] = "aux2"
+        try config.writeAtomically(to: path)
+        let backup = try Data(contentsOf: path.appendingPathExtension("backup"))
+        assert(backup == original)
+        let saved = try JSONSerialization.jsonObject(with: Data(contentsOf: path)) as! [String: Any]
+        assert(saved["custom"] as? String == "keep")
+        assert((saved["media_bridge"] as? [String: Any])?["timer"] is [String: Any])
+        let first: [String: Any] = ["enabled": true, "aux_timer_index": 1, "media_timer_source": "current_item"]
+        let second: [String: Any] = ["enabled": true, "aux_timer_index": 2, "media_timer_source": "playlist", "inactive_policy": "keep_last"]
+        config.mediaBridge["auxiliary_timers"] = [first, second]
+        _ = try config.validated()
+        for invalid in [[first, first], [first, ["aux_timer_index": true, "media_timer_source": "playlist"]],
+                        [first, ["aux_timer_index": 2, "media_timer_source": "invalid"]]] {
+            config.mediaBridge["auxiliary_timers"] = invalid
+            do { _ = try config.validated(); fatalError("Invalid active auxiliary output accepted") } catch {}
+        }
+        config.mediaBridge["auxiliary_timers"] = [first, second, ["enabled": false, "aux_timer_index": "invalid", "media_timer_source": NSNull()]]
+        _ = try config.validated()
+        config.mediaBridge["enabled"] = false
+        config.mediaBridge["auxiliary_timers"] = "invalid but unused"
+        _ = try config.validated()
     }
 
     static func testMediaValidation() throws {
