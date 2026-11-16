@@ -6,6 +6,7 @@ struct SettingsWindowLayoutTests {
     static func main() throws {
         _ = NSApplication.shared
         NSApp.setActivationPolicy(.accessory)
+        try testUnappliedTimerEdits()
         let root: [String: Any] = ["config_version": AppConfig.currentConfigVersion,
             "ontime": ["base_url": "http://127.0.0.1:4001"],
             "media_bridge": ["enabled": true, "source_mode": "follow_program",
@@ -98,8 +99,8 @@ struct SettingsWindowLayoutTests {
         precondition(variables.numberOfItems == 4)
         controller.updateMediaStatus(["available": true, "source_name": "Test playlist", "current_file": "B_GREEN.mp4", "remaining_ms": 45000, "playlist_remaining_ms": 75000], output: "Multiple outputs", outputs: ["auxiliary_timers": [
             ["aux_timer_index": 1, "output_status": "synced"], ["aux_timer_index": 2, "output_status": "unknown_remaining"]]])
-        precondition(rows()[0].status.stringValue.contains("synced"))
-        precondition(rows()[1].status.stringValue.contains("waiting for known duration"))
+        precondition(rows()[0].status.stringValue.contains("Not applied yet"))
+        precondition(rows()[1].status.stringValue.contains("Not applied yet"))
         variables.scrollToVisible(variables.bounds)
         try snapshot("vos-message-settings.png")
         button("Send a secondary message").performClick(nil)
@@ -136,4 +137,67 @@ struct SettingsWindowLayoutTests {
         messageController.close()
         print("SettingsWindowLayoutTests: PASS")
     }
+
+    @MainActor
+    static func testUnappliedTimerEdits() throws {
+        let path = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: path) }
+        let media: [String: Any] = ["enabled": true, "auxiliary_timers": [
+            ["enabled": true, "aux_timer_index": 1, "media_timer_source": "current_item", "inactive_policy": "stop"],
+            ["enabled": true, "aux_timer_index": 2, "media_timer_source": "playlist", "inactive_policy": "stop"]]]
+        try JSONSerialization.data(withJSONObject: ["config_version": 3, "ontime": ["base_url": "http://localhost:4001"], "media_bridge": media]).write(to: path)
+        let active = try AppConfig.load(from: path)
+        var saved: AppConfig?
+        var saves = 0
+        func controller(_ config: AppConfig) -> SettingsWindowController {
+            SettingsWindowController(draft: SettingsDraft(config: config, password: ""), onSave: { draft in
+                saved = try draft.applying(to: config).config
+                saves += 1
+            }, onOpenConfig: {})
+        }
+        func views(_ view: NSView) -> [NSView] {
+            let children = view.subviews + ((view as? NSStackView)?.detachedViews ?? [])
+            return [view] + children.flatMap { views($0) }
+        }
+        let output: [String: Any] = ["auxiliary_timers": [["aux_timer_index": 1, "output_status": "synced"], ["aux_timer_index": 2, "output_status": "synced"]]]
+        let editor = controller(active)
+        let content = editor.window!.contentView!
+        let rows = views(content).compactMap { $0 as? AuxiliaryTimerRow }
+        editor.updateMediaStatus([:], output: "Synced", outputs: output)
+        precondition(rows[0].status.stringValue == "Aux 1: synced")
+        rows[0].slot.selectItem(at: 1)
+        rows[0].onChange?()
+        precondition(rows[0].status.stringValue.contains("Not applied yet"), "Aux1→Aux2 must not borrow Aux2 success")
+        rows[0].slot.selectItem(at: 0)
+        rows[0].onChange?()
+        precondition(rows[0].status.stringValue == "Aux 1: synced")
+        rows[0].source.selectItem(at: 1)
+        rows[0].onChange?()
+        precondition(rows[0].status.stringValue.contains("Not applied yet"))
+        rows[0].source.selectItem(at: 0)
+        rows[0].policy.selectItem(at: 1)
+        rows[0].onChange?()
+        precondition(rows[0].status.stringValue.contains("Not applied yet"))
+        views(content).compactMap { $0 as? NSButton }.first { $0.title == "Cancel" }!.performClick(nil)
+        precondition(saves == 0 && saved == nil)
+        precondition(NSDictionary(dictionary: active.mediaBridge).isEqual(to: media))
+        let next = controller(active)
+        let nextViews = views(next.window!.contentView!)
+        let nextRows = nextViews.compactMap { $0 as? AuxiliaryTimerRow }
+        nextRows[0].source.selectItem(at: 1)
+        nextRows[0].policy.selectItem(at: 1)
+        nextRows[0].onChange?()
+        nextViews.compactMap { $0 as? NSButton }.first { $0.title == "Save & Reconnect" }!.performClick(nil)
+        precondition(saves == 1)
+        let applied = controller(saved!)
+        let appliedRows = views(applied.window!.contentView!).compactMap { $0 as? AuxiliaryTimerRow }
+        applied.updateMediaStatus([:], output: "Unavailable", outputs: ["output_status": "unavailable"])
+        precondition(appliedRows[0].status.stringValue.contains("unavailable"))
+        applied.updateMediaStatus([:], output: "Pending", outputs: ["auxiliary_timers": [["aux_timer_index": 1, "output_status": "pending"]]])
+        precondition(appliedRows[0].status.stringValue.contains("pending"))
+        applied.updateMediaStatus([:], output: "Synced", outputs: output)
+        precondition(appliedRows[0].status.stringValue == "Aux 1: synced")
+        applied.close()
+    }
+
 }

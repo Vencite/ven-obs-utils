@@ -11,8 +11,9 @@ final class AuxiliaryTimerRow: NSStackView {
     var onRemove: (() -> Void)?
     var onChange: (() -> Void)?
     private var original: [String: Any]
+    private var appliedValue: [String: Any]?
 
-    init(_ value: [String: Any]) {
+    init(_ value: [String: Any], applied: Bool) {
         original = value
         super.init(frame: .zero)
         orientation = .vertical
@@ -40,7 +41,12 @@ final class AuxiliaryTimerRow: NSStackView {
             control.target = self
             control.action = #selector(changed)
         }
+        if applied { appliedValue = self.value }
         changed()
+    }
+    var hasUnappliedChanges: Bool {
+        guard let appliedValue else { return true }
+        return !NSDictionary(dictionary: value).isEqual(to: appliedValue)
     }
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
     var value: [String: Any] {
@@ -381,7 +387,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
         timerEnabled.state = timer["ontime_output"] as? String == "secondary_message" && mode != "off" ? .on : .off
         inactivePolicy.selectItem(at: timer["inactive_policy"] as? String == "keep_last" ? 1 : 0)
         secondaryTemplate.stringValue = timer["secondary_message_template"] as? String ?? "{current_file} · {playlist_remaining_hhmmss}"
-        for value in AppConfig.auxiliaryTimers(in: media) { appendTimer(value) }
+        for value in AppConfig.auxiliaryTimers(in: media) { appendTimer(value, applied: true) }
         let selection = AppConfig.stageTimerSource(in: media)
         stageSource.selectItem(at: ["off", "aux1", "aux2", "aux3", "secondary"].firstIndex(of: selection) ?? 0)
         optionsChanged()
@@ -451,8 +457,8 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
         refreshPreview()
     }
 
-    private func appendTimer(_ value: [String: Any]) {
-        let row = AuxiliaryTimerRow(value)
+    private func appendTimer(_ value: [String: Any], applied: Bool = false) {
+        let row = AuxiliaryTimerRow(value, applied: applied)
         row.onRemove = { [weak self, weak row] in
             guard let self, let row else { return }
             self.timerRows.removeAll { $0 === row }
@@ -477,6 +483,11 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
         let states = outputState["auxiliary_timers"] as? [[String: Any]] ?? []
         for row in timerRows {
             let index = row.slot.indexOfSelectedItem + 1
+            if row.hasUnappliedChanges {
+                row.status.stringValue = "Aux \(index): Not applied yet"
+                row.status.textColor = .secondaryLabelColor
+                continue
+            }
             let current = states.first { $0["aux_timer_index"] as? Int == index }
             let status = row.enabled.state == .off ? "disabled" : current?["output_status"] as? String ?? (outputState["output_status"] as? String == "unavailable" ? "unavailable" : "pending")
             let label = status == "unknown_remaining" ? "waiting for known duration" : status.replacingOccurrences(of: "_", with: " ")
