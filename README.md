@@ -20,7 +20,7 @@ Choose which scenes and CUEs count as breaks in Settings.
 Preview changes are ignored. Skipped events and milestones are passed over,
 and reconnecting does not replay missed scene changes.
 
-## Media outputs (develop)
+## Media outputs
 
 Use [Media Playlist Source (MPS)](https://github.com/Vencite/media-playlist-source),
 my OBS playlist plugin, to send current-file or playlist time to up to three
@@ -38,7 +38,7 @@ Advanced Scene Switcher is not required.
 
 [Download the latest release](https://github.com/Vencite/ven-obs-utils/releases/latest),
 open the DMG and drag **VEN OBS Utils** to Applications. A ZIP is also available.
-Prebuilt apps do not require Xcode.
+Prebuilt apps do not require Xcode. See [what’s new in 0.3.0](CHANGELOG.md).
 
 Builds are ad-hoc signed, without Apple notarization. If macOS blocks the app,
 allow it in **System Settings → Privacy & Security**.
