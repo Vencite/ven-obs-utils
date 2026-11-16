@@ -13,27 +13,22 @@ AI-assisted coding. This is not an official OBS or Ontime project.
 
 ## Break automation
 
-Define your OBS break-scene and Ontime break-CUE patterns, for example
-`^BREAK_.*$` and `^BRK_\d+$`.
+Switch OBS Program to a break scene and VOS starts the next break in Ontime.
+Switch back and it moves to the next event, provided Ontime is still on a break.
+Choose which scenes and CUEs count as breaks in Settings.
 
-- **Normal → break scene:** start the next matching break event in Ontime.
-- **Break → normal scene:** if Ontime is currently on a break CUE, start the next
-  non-skipped event.
-- Normal → normal and break → break do nothing.
-
-The app searches forward through the rundown, skips milestones and skipped events,
-and starts the target by unique ID. It does nothing when connections, patterns or
-current state do not allow a safe choice, and never blindly retries an uncertain start.
-Only **Program** changes count; Preview is ignored. Reconnect establishes a fresh
-baseline without replaying missed transitions.
+Preview changes are ignored. Skipped events and milestones are passed over,
+and reconnecting does not replay missed scene changes.
 
 ## Media outputs (develop)
 
-Follow a Media Playlist Source in Program or select a fixed source. Send its
-current-file and playlist time to up to three independent Ontime auxiliary timers,
-compose a secondary message alongside them, or
-export the current filename to TXT. Outputs are optional and disabled by default.
-See [media setup and testing](MEDIA-BRIDGE.md).
+Use [Media Playlist Source (MPS)](https://github.com/Vencite/media-playlist-source),
+my OBS playlist plugin, to send current-file or playlist time to up to three
+Ontime auxiliary timers. You can also send a secondary message or export the
+current filename to TXT. Follow the source in Program or choose a fixed one;
+all outputs are optional and off by default.
+
+[Media setup and testing →](MEDIA-BRIDGE.md)
 
 ## Download and install
 
@@ -50,92 +45,30 @@ allow it in **System Settings → Privacy & Security**.
 
 ## Settings and status
 
-Open **Settings…** from the menu bar:
+Open **Settings…** from the menu bar to connect OBS and Ontime, choose media
+outputs and set up break automation. The menu shows connections, media time
+and the last action.
 
-- **Connections:** OBS address, port and password; Ontime URL. OBS defaults to
-  `127.0.0.1:4455`; remote hosts are supported.
-- **Media outputs:** source selection, TXT export and Ontime timers/messages.
-- **Break automation:** scene/CUE patterns, enter/leave switches and Dry run.
+Start with **Dry run** to check your setup without changing Ontime (TXT export
+still writes files). Updating the app keeps your settings and OBS password.
 
-Start with **Dry run**: targets are resolved without changing Ontime. TXT export
-still writes files. Test against your rundown before enabling live automation.
-The menu shows connection state, Program scene, current Ontime event, media
-output status and the last action. The icon indicates connection problems,
-requests in progress, successful changes or failures.
+## In use
 
-Saving validates settings, restarts the helper and reconnects OBS. Configuration
-is stored at `~/Library/Application Support/VEN OBS Utils/config.json`; the OBS
-password is in macOS Keychain. Updating the app preserves both. Older configs
-migrate automatically with a `config.json.backup`, preserving user values and
-unknown keys. See [config/config.example.json](config/config.example.json).
+<table>
+  <tr>
+    <td width="40%" valign="top"><img src="docs/images/menu-bar.png" alt="VOS menu showing connections, current media and output status" width="360"></td>
+    <td width="60%" valign="top"><img src="docs/images/media-outputs.png" alt="Media outputs settings with separate current-file and whole-playlist auxiliary timers" width="540"></td>
+  </tr>
+  <tr>
+    <td>Connection and playback status in the menu bar.</td>
+    <td>Independent media outputs. Screenshots from a develop build.</td>
+  </tr>
+</table>
 
-## Build and test
+## Developer documentation
 
-Building requires Apple Command Line Tools / Xcode:
-
-```bash
-git clone https://github.com/Vencite/ven-obs-utils.git
-cd ven-obs-utils
-./build_app.sh
-./install.sh
-```
-
-The installer copies the app to `/Applications` and opens it. Stop any older
-manually running helper using port `8765` first.
-
-```bash
-python3 -m unittest discover -s tests -v
-```
-
-Backend tests use a local fake Ontime server. On macOS, `./test.sh` runs the full
-Python and Swift/AppKit suite. Both Tests (push/pull_request) and Release DMG use
-this same required suite before building; a failure prevents publication.
-Automated checks do not replace live setup testing.
-
-Develop builds show `0.2.0 (develop <short SHA>)` in the menu and log. The base
-version comes from `.github/RELEASE_VERSION` (still `v0.2.0`); the complete commit
-is stored in `Info.plist` as `VENDevelopCommit` and logged at startup.
-`CFBundleShortVersionString` stays numeric, and `CFBundleVersion` remains `1`.
-`VERSION=1.2.3 ./build_app.sh` still builds that production version; a semver
-prerelease suffix is shown in the label while the Apple short version uses its
-numeric core. Local default builds on develop identify the current HEAD; CI
-explicitly stamps its tested SHA. Uncommitted local edits are not represented by
-HEAD, so use CI artifacts when identifying a tested build.
-
-## Manual HTTP triggers
-
-The helper binds to `127.0.0.1:8765` by default:
-
-| Method and path | Purpose |
-| --- | --- |
-| `POST /ontime/break` | Enter break (`/break` is a legacy alias) |
-| `POST /ontime/leave-break` | Leave break |
-| `GET /health`, `GET /status` | Connection and runtime status |
-
-State-changing routes require `Authorization: Bearer <token>` and a loopback
-client. The app supplies its existing random per-run IPC secret automatically;
-a standalone helper must receive `VEN_MEDIA_IPC_TOKEN` in its environment.
-Without that secret the automation endpoints are denied. The helper now refuses
-LAN binds even when media outputs are disabled. Repeated triggers are debounced.
-There is no public media-control API.
-
-Migration for external callers (including Companion HTTP actions): the repository
-contains no external caller configuration, but these documented paths may have
-been used externally. Preserve the path, change GET to POST, and set the Bearer
-header. `/break` remains an authenticated POST alias. GET returns 405 and never
-executes an action; there is no insecure compatibility switch. For standalone
-use, generate a secret (for example `python3 -c 'import secrets; print(secrets.token_urlsafe(32))'`),
-provide it to the helper via `VEN_MEDIA_IPC_TOKEN`, and configure the same secret
-in the local caller. Do not put it in the URL or commit it. The GUI app rotates
-its private token at launch; external clients cannot depend on a stable GUI token.
-If a caller cannot send POST with headers, migrate it before using this build.
-Normal Program-scene automation is updated automatically.
-
-## Releases
-
-Update `.github/RELEASE_VERSION` to a new semver and push to `main`, or push a
-`v*` tag. GitHub Actions tests, builds and publishes DMG/ZIP packages. There is
-no Developer ID signing or notarization step. Develop artifacts are test builds.
+See [building, testing and local HTTP triggers](docs/DEVELOPMENT.md) for source
+builds, test commands and authenticated integrations such as Companion.
 
 ## License and contact
 
@@ -143,19 +76,3 @@ MIT. See [LICENSE](LICENSE). Issues and sensible PRs are welcome.
 
 For live production, video, photography or 3D work:
 [VEN.WORKS — English](https://ven.works/en/) · [Polish](https://ven.works/).
-
-
-## Test candidates
-
-RC tags such as `v0.2.1-rc.1` are explicitly marked GitHub **Pre-release** and
-never Latest. Publication requires successful develop CI for the exact tagged
-commit, then repeats the full suite before building/verifying DMG and ZIP.
-Existing releases/assets are never overwritten. `.github/RELEASE_VERSION`
-remains the stable version marker; an RC does not require changing it or merging
-to main. Develop CI also uploads verified DMG/ZIP installers as a fallback.
-
-Builds now compile arm64 and x86_64 slices explicitly for macOS 13 and combine
-them; packaging verifies the actual architectures, minimum targets, ad-hoc
-signature and commit metadata. These apps are not notarized. Before an RC launch,
-quit other copies, back up Application Support/VEN OBS Utils and enable Dry Run
-in its existing configuration. See the RC release notes and [RC audit](RC-AUDIT.md).

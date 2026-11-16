@@ -6,8 +6,13 @@ __pycache__/
 # Local/private config. The public template is config/config.example.json.
 config/config.json
 
-# Documentation and agent planning files stay local.
-docs/
+# Keep private planning local; publish only the user-facing documentation.
+/docs/*
+!/docs/DEVELOPMENT.md
+!/docs/images/
+/docs/images/*
+!/docs/images/menu-bar.png
+!/docs/images/media-outputs.png
 .superpowers/
 /AGENTS.md
 /LOCAL-TESTING.md
