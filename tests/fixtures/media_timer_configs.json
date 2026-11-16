@@ -1,0 +1,246 @@
+[
+  {
+    "name": "two_times",
+    "valid": true,
+    "media": {
+      "enabled": true,
+      "auxiliary_timers": [
+        {
+          "enabled": true,
+          "aux_timer_index": 1,
+          "media_timer_source": "current_item"
+        },
+        {
+          "enabled": true,
+          "aux_timer_index": 2,
+          "media_timer_source": "playlist",
+          "inactive_policy": "keep_last"
+        }
+      ],
+      "stage_timer_source": "aux2"
+    }
+  },
+  {
+    "name": "duplicate",
+    "valid": false,
+    "media": {
+      "enabled": true,
+      "auxiliary_timers": [
+        {
+          "enabled": true,
+          "aux_timer_index": 1,
+          "media_timer_source": "current_item"
+        },
+        {
+          "enabled": true,
+          "aux_timer_index": 1,
+          "media_timer_source": "current_item"
+        }
+      ]
+    }
+  },
+  {
+    "name": "slot_bool",
+    "valid": false,
+    "media": {
+      "enabled": true,
+      "auxiliary_timers": [
+        {
+          "aux_timer_index": true,
+          "media_timer_source": "playlist"
+        }
+      ]
+    }
+  },
+  {
+    "name": "unknown_source",
+    "valid": false,
+    "media": {
+      "enabled": true,
+      "auxiliary_timers": [
+        {
+          "aux_timer_index": 1,
+          "media_timer_source": "off"
+        }
+      ]
+    }
+  },
+  {
+    "name": "four_rows",
+    "valid": false,
+    "media": {
+      "enabled": true,
+      "auxiliary_timers": [
+        {
+          "enabled": false
+        },
+        {
+          "enabled": false
+        },
+        {
+          "enabled": false
+        },
+        {
+          "enabled": false
+        }
+      ]
+    }
+  },
+  {
+    "name": "disabled_row",
+    "valid": true,
+    "media": {
+      "enabled": true,
+      "auxiliary_timers": [
+        {
+          "enabled": true,
+          "aux_timer_index": 1,
+          "media_timer_source": "current_item"
+        },
+        {
+          "enabled": true,
+          "aux_timer_index": 2,
+          "media_timer_source": "playlist",
+          "inactive_policy": "keep_last"
+        },
+        {
+          "enabled": false,
+          "aux_timer_index": "bad",
+          "media_timer_source": null
+        }
+      ]
+    }
+  },
+  {
+    "name": "disabled_bridge",
+    "valid": true,
+    "media": {
+      "enabled": false,
+      "auxiliary_timers": "unused invalid"
+    }
+  },
+  {
+    "name": "stage_missing",
+    "valid": false,
+    "media": {
+      "enabled": true,
+      "auxiliary_timers": [
+        {
+          "enabled": true,
+          "aux_timer_index": 1,
+          "media_timer_source": "current_item"
+        }
+      ],
+      "stage_timer_source": "aux2"
+    }
+  },
+  {
+    "name": "stage_secondary_disabled",
+    "valid": false,
+    "media": {
+      "enabled": true,
+      "auxiliary_timers": [
+        {
+          "enabled": true,
+          "aux_timer_index": 1,
+          "media_timer_source": "current_item"
+        },
+        {
+          "enabled": true,
+          "aux_timer_index": 2,
+          "media_timer_source": "playlist",
+          "inactive_policy": "keep_last"
+        }
+      ],
+      "stage_timer_source": "secondary"
+    }
+  },
+  {
+    "name": "disabled_message_fields",
+    "valid": true,
+    "media": {
+      "enabled": true,
+      "auxiliary_timers": [
+        {
+          "enabled": true,
+          "aux_timer_index": 1,
+          "media_timer_source": "current_item"
+        },
+        {
+          "enabled": true,
+          "aux_timer_index": 2,
+          "media_timer_source": "playlist",
+          "inactive_policy": "keep_last"
+        }
+      ],
+      "timer": {
+        "ontime_output": "secondary_message",
+        "media_timer_source": "off",
+        "secondary_message_template": null
+      }
+    }
+  },
+  {
+    "name": "bad_active_message",
+    "valid": false,
+    "media": {
+      "enabled": true,
+      "auxiliary_timers": [
+        {
+          "enabled": true,
+          "aux_timer_index": 1,
+          "media_timer_source": "current_item"
+        },
+        {
+          "enabled": true,
+          "aux_timer_index": 2,
+          "media_timer_source": "playlist",
+          "inactive_policy": "keep_last"
+        }
+      ],
+      "timer": {
+        "ontime_output": "secondary_message",
+        "media_timer_source": "playlist",
+        "secondary_message_template": "{invalid}"
+      }
+    }
+  },
+  {
+    "name": "legacy_aux",
+    "valid": true,
+    "media": {
+      "enabled": true,
+      "timer": {
+        "aux_timer_index": 2,
+        "media_timer_source": "playlist",
+        "inactive_policy": "keep_last",
+        "change_stage_timer_secondary_source": true
+      }
+    }
+  },
+  {
+    "name": "new_disabled_legacy_aux_fields",
+    "valid": true,
+    "media": {
+      "enabled": true,
+      "auxiliary_timers": [
+        {
+          "enabled": true,
+          "aux_timer_index": 1,
+          "media_timer_source": "current_item"
+        },
+        {
+          "enabled": true,
+          "aux_timer_index": 2,
+          "media_timer_source": "playlist",
+          "inactive_policy": "keep_last"
+        }
+      ],
+      "timer": {
+        "ontime_output": "auxiliary_timer",
+        "aux_timer_index": "unused",
+        "media_timer_source": "invalid"
+      }
+    }
+  }
+]

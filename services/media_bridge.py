@@ -74,7 +74,7 @@ def validate_snapshot(value: Any) -> dict[str, Any]:
 
 
 
-def _validated_config(value: Any) -> dict:
+def validate_config(value: Any) -> dict:
     if not isinstance(value, dict):
         raise ValueError("media_bridge_config_must_be_object")
     config = copy.deepcopy(value)
@@ -95,27 +95,29 @@ def _validated_config(value: Any) -> dict:
             raise ValueError(f"invalid_{section}_config")
     for section, field in ((config, "enabled"), (config.get("txt", {}), "enabled"),
                            (config.get("json", {}), "enabled"),
-                           (config.get("timer", {}), "change_stage_timer_secondary_source")):
+                           (config.get("timer", {}) if "auxiliary_timers" not in config else {}, "change_stage_timer_secondary_source")):
         if field in section and type(section[field]) is not bool:
             raise ValueError(f"invalid_{field}")
     timer = config.get("timer", {})
-    for field, allowed, default in (
-        ("media_timer_source", {"off", "current_item", "playlist"}, "off"),
-        ("ontime_output", {"auxiliary_timer", "secondary_message"}, "auxiliary_timer"),
-        ("inactive_policy", {"stop", "keep_last"}, "stop"),
-    ):
-        if not isinstance(timer.get(field, default), str) or timer.get(field, default) not in allowed:
-            raise ValueError(f"invalid_{field}")
-    index = timer.get("aux_timer_index", 1)
-    if type(index) is not int or index not in {1, 2, 3}:
-        raise ValueError("invalid_aux_timer_index")
-    template = timer.get("secondary_message_template", "{current_file}")
-    if not isinstance(template, str) or len(template) > 2048:
-        raise ValueError("invalid_secondary_template")
-    fields = {"current_file", "remaining_hhmmss", "playlist_remaining_hhmmss"}
-    if any(field not in fields or spec or conversion
-           for _, field, spec, conversion in string.Formatter().parse(template) if field is not None):
-        raise ValueError("invalid_secondary_template")
+    validate_timer = "auxiliary_timers" not in config or (timer.get("ontime_output") == "secondary_message" and timer.get("media_timer_source", "off") != "off")
+    if validate_timer:
+        for field, allowed, default in (
+            ("media_timer_source", {"off", "current_item", "playlist"}, "off"),
+            ("ontime_output", {"auxiliary_timer", "secondary_message"}, "auxiliary_timer"),
+            ("inactive_policy", {"stop", "keep_last"}, "stop"),
+        ):
+            if not isinstance(timer.get(field, default), str) or timer.get(field, default) not in allowed:
+                raise ValueError(f"invalid_{field}")
+        index = timer.get("aux_timer_index", 1)
+        if type(index) is not int or index not in {1, 2, 3}:
+            raise ValueError("invalid_aux_timer_index")
+        template = timer.get("secondary_message_template", "{current_file}")
+        if not isinstance(template, str) or len(template) > 2048:
+            raise ValueError("invalid_secondary_template")
+        fields = {"current_file", "remaining_hhmmss", "playlist_remaining_hhmmss"}
+        if any(field not in fields or spec or conversion
+               for _, field, spec, conversion in string.Formatter().parse(template) if field is not None):
+            raise ValueError("invalid_secondary_template")
     txt = config.get("txt", {})
     if (not isinstance(txt.get("clear_policy", "clear_when_inactive"), str) or
             txt.get("clear_policy", "clear_when_inactive") not in {"clear_when_inactive", "keep_last"}):
@@ -129,7 +131,49 @@ def _validated_config(value: Any) -> dict:
     if (txt.get("enabled") and config.get("json", {}).get("enabled") and
             txt["path"] == config["json"]["path"]):
         raise ValueError("export_paths_must_differ")
+    if "auxiliary_timers" in config:
+        rows = config["auxiliary_timers"]
+        if not isinstance(rows, list) or len(rows) > 3:
+            raise ValueError("invalid_auxiliary_timers")
+        slots = set()
+        for row in rows:
+            if not isinstance(row, dict) or type(row.get("enabled", True)) is not bool:
+                raise ValueError("invalid_auxiliary_timer")
+            if not row.get("enabled", True):
+                continue
+            index = row.get("aux_timer_index")
+            if type(index) is not int or index not in {1, 2, 3} or index in slots:
+                raise ValueError("invalid_or_duplicate_aux_slot")
+            slots.add(index)
+            if row.get("media_timer_source") not in ("current_item", "playlist"):
+                raise ValueError("invalid_timer_source")
+            if row.get("inactive_policy", "stop") not in ("stop", "keep_last"):
+                raise ValueError("invalid_inactive_policy")
+    selection = config.get("stage_timer_source", "off")
+    if selection not in ("off", "aux1", "aux2", "aux3", "secondary"):
+        raise ValueError("invalid_stage_timer_source")
+    if selection.startswith("aux") and not any(r.get("enabled", True) and r.get("aux_timer_index", 1) == int(selection[-1]) for r in auxiliary_outputs(config)):
+        raise ValueError("stage_timer_requires_enabled_output")
+    if selection == "secondary" and not (timer.get("ontime_output") == "secondary_message" and timer.get("media_timer_source", "off") != "off"):
+        raise ValueError("stage_timer_requires_enabled_output")
     return config
+
+
+def auxiliary_outputs(config: dict) -> list[dict]:
+    if "auxiliary_timers" in config:
+        return config["auxiliary_timers"]
+    timer = config.get("timer", {})
+    if timer.get("ontime_output", "auxiliary_timer") == "auxiliary_timer" and timer.get("media_timer_source", "off") != "off":
+        return [{**timer, "enabled": True}]
+    return []
+
+
+def _output_failure(exc: Exception) -> str:
+    if isinstance(exc, HTTPError):
+        return f"ontime_http_{exc.code}"
+    if isinstance(exc, InterruptedError):
+        return "snapshot_superseded"
+    return str(exc)[:256] if isinstance(exc, ValueError) else "ontime_request_failed"
 
 
 def _output_identity(snapshot: dict) -> dict:
@@ -169,7 +213,7 @@ class MediaBridge:
 
     def __init__(self, config: dict, dry_run: bool, ontime_get: Callable[[str], Any],
                  *, ownership_path: Path | None = None, target_id: str = ""):
-        self.config = _validated_config(config)
+        self.config = validate_config(config)
         if type(dry_run) is not bool:
             raise ValueError("invalid_dry_run")
         self.dry_run = dry_run
@@ -196,10 +240,12 @@ class MediaBridge:
         self._last_message: str | None = None
         self._message_sent_at = float("-inf")
         self._message_due: float | None = None
-        self._timer_signature: tuple | None = None
-        self._timer_state: str | None = None
-        self._timer_owned = False
+        self._timers = {i: {"owned": False, "signature": None, "state": None, "error": None} for i in (1, 2, 3)}
+        self._journal_slots: set[int] = set()
+        self._poll_cache = None
         self._secondary_selected = False
+        self._message_error = None
+        self._stage_error = None
         self._ownership_path = ownership_path
         self._target_id = target_id
         self._recovery = None
@@ -208,12 +254,16 @@ class MediaBridge:
         if ownership_path and ownership_path.exists():
             try:
                 record = json.loads(ownership_path.read_text(encoding="utf-8"))
-                if (not isinstance(record, dict) or type(record.get("index")) is not int or
-                        record["index"] not in {1, 2, 3} or not isinstance(record.get("target"), str)):
+                indices = record.get("indices", [record.get("index")]) if isinstance(record, dict) else None
+                if (not isinstance(record, dict) or not isinstance(indices, list) or not indices or
+                        any(type(i) is not int or i not in {1, 2, 3} for i in indices) or
+                        len(set(indices)) != len(indices) or not isinstance(record.get("target"), str)):
                     raise ValueError("invalid_timer_journal")
-                self._recovery = record
+                self._journal_slots = set(indices)
+                self._recovery = {"target": record["target"], "indices": sorted(indices)}
             except (OSError, ValueError):
-                self._recovery = {"target": None}
+                self._recovery = {"target": None, "indices": []}
+
 
 
     def reset_session(self, session: str, epoch: int | None = None) -> dict:
@@ -285,40 +335,61 @@ class MediaBridge:
         self._wake.set()
         return {"status": "success"}
 
-    def _save_ownership(self, index: int) -> None:
+    def _persist_ownership(self, slots: set[int]) -> None:
         if self._ownership_path and not self.dry_run:
-            _atomic_write(str(self._ownership_path), json.dumps({"target": self._target_id, "index": index}))
+            if slots:
+                _atomic_write(str(self._ownership_path), json.dumps({"target": self._target_id, "indices": sorted(slots)}))
+            else:
+                self._ownership_path.unlink(missing_ok=True)
             directory = os.open(self._ownership_path.parent, os.O_RDONLY)
             try:
                 os.fsync(directory)
             finally:
                 os.close(directory)
 
-    def _clear_ownership(self) -> None:
-        if self._ownership_path and not self.dry_run:
-            self._ownership_path.unlink(missing_ok=True)
+    def _save_ownership(self, index: int) -> None:
+        # Retain uncertain write intents in memory even if rename/fsync fails.
+        self._journal_slots.add(index)
+        self._persist_ownership(self._journal_slots)
+
+    def _clear_ownership(self, index: int) -> None:
+        remaining = self._journal_slots - {index}
+        self._persist_ownership(remaining)
+        self._journal_slots = remaining
+
+    def _poll(self) -> dict:
+        if self._poll_cache is None:
+            try:
+                poll = self._request("/api/poll")
+                self._poll_cache = poll.get("payload", poll) if isinstance(poll, dict) else {}
+            except Exception as exc:
+                self._poll_cache = exc
+        if isinstance(self._poll_cache, Exception):
+            raise self._poll_cache
+        return self._poll_cache if isinstance(self._poll_cache, dict) else {}
 
     def _recover_timer(self) -> None:
         if not self._recovery:
             return
-        if time.monotonic() < self._recovery_due:
-            raise ValueError(self._recovery_error)
-        self._recovery_due = time.monotonic() + 2
-        self._recovery_error = "timer_recovery_required"
-        if self.dry_run:
-            raise ValueError(self._recovery_error)
         if self._recovery.get("target") != self._target_id:
-            self._recovery_error = "timer_recovery_target_changed"
-            raise ValueError(self._recovery_error)
-        poll = self._request("/api/poll")
-        if isinstance(poll, dict) and isinstance(poll.get("payload"), dict):
-            poll = poll["payload"]
-        runtime = poll.get(f"auxtimer{self._recovery['index']}") if isinstance(poll, dict) else None
-        # Ontime 4 has no exclusive owner token; elapsed/duration cannot prove ownership.
-        if not isinstance(runtime, dict) or runtime.get("playback") != "stop":
-            raise ValueError("timer_recovery_required")
-        self._clear_ownership()
-        self._recovery = None
+            self._recovery_due = time.monotonic() + 2
+            raise ValueError("timer_recovery_target_changed")
+        if time.monotonic() < self._recovery_due:
+            return
+        self._recovery_due = time.monotonic() + 2
+        if self.dry_run:
+            return
+        poll = self._poll()
+        for index in list(self._recovery["indices"]):
+            runtime = poll.get(f"auxtimer{index}")
+            # Ontime 4 has no owner token; only an explicit stopped slot resolves ambiguity.
+            if isinstance(runtime, dict) and runtime.get("playback") == "stop":
+                self._clear_ownership(index)
+                with self._lock:
+                    self._recovery["indices"].remove(index)
+        with self._lock:
+            if not self._recovery["indices"]:
+                self._recovery = None
 
     def _expire_locked(self) -> None:
         if self._message_due is not None and time.monotonic() >= self._message_due:
@@ -337,7 +408,8 @@ class MediaBridge:
             if not private:
                 state.pop("current_path", None)
             if self._recovery:
-                state["recovery_timer_index"] = self._recovery.get("index")
+                state["recovery_timer_index"] = next(iter(self._recovery["indices"]), None)
+                state["recovery_timer_indices"] = list(self._recovery["indices"])
                 state["recovery_target_changed"] = self._recovery.get("target") != self._target_id
             if self._last_ontime_action:
                 state["last_ontime_action"] = copy.deepcopy(self._last_ontime_action)
@@ -370,13 +442,53 @@ class MediaBridge:
                 state["output_status"] = "synced"
             if self._output_error:
                 state["output_error"] = self._output_error
+            state["auxiliary_timers"] = self._timer_statuses(state)
+            if "auxiliary_timers" in self.config:
+                active = [row for row in state["auxiliary_timers"] if row["output_status"] != "disabled"]
+                if active:
+                    statuses = {row["output_status"] for row in active}
+                    if self._output_error: state["output_status"] = "error"
+                    elif self._processed != self._version: state["output_status"] = "pending"
+                    else: state["output_status"] = next((value for value in ("waiting_for_snapshot", "unknown_remaining", "inactive", "dry_run") if value in statuses), "synced")
+            message = timer.get("ontime_output") == "secondary_message" and mode != "off" and self.config.get("enabled")
+            if message:
+                state["secondary_message_status"] = "error" if self._message_error else "waiting_for_snapshot" if not state.get("available") else "dry_run" if self.dry_run else "pending" if self._processed != self._version else "synced"
+            if self._stage_error:
+                state["stage_timer_error"] = self._stage_error
             return state
+
+    def _timer_statuses(self, state: dict) -> list[dict]:
+        rows = {r.get("aux_timer_index", 1): r for r in auxiliary_outputs(self.config) if r.get("enabled", True)}
+        result = []
+        for index, runtime in self._timers.items():
+            row = rows.get(index)
+            error = runtime["error"]
+            recovery = self._recovery and (index in self._recovery["indices"] or self._recovery.get("target") != self._target_id)
+            if recovery:
+                error = "timer_recovery_required" if self._recovery.get("target") == self._target_id else "timer_recovery_target_changed"
+            mode = row.get("media_timer_source") if row else None
+            known = "remaining_known" if mode == "current_item" else "playlist_remaining_known"
+            if recovery: status = "error"
+            elif not self.config.get("enabled") or row is None: status = "disabled"
+            elif error: status = "error"
+            elif not state.get("available"): status = "waiting_for_snapshot"
+            elif state.get("state") not in {"playing", "paused"}: status = "inactive"
+            elif not state.get(known): status = "unknown_remaining"
+            elif self.dry_run: status = "dry_run"
+            elif self._processed != self._version: status = "pending"
+            else: status = "synced"
+            entry = {"aux_timer_index": index, "media_timer_source": mode or "off", "output_status": status}
+            if error and status == "error": entry["output_error"] = error
+            result.append(entry)
+        return result
 
     def ontime_unavailable(self) -> None:
         with self._lock:
-            if not self.config.get("enabled") or self.config.get("timer", {}).get("media_timer_source", "off") == "off":
+            if not self.config.get("enabled") or (not auxiliary_outputs(self.config) and self.config.get("timer", {}).get("media_timer_source", "off") == "off"):
                 return
             self._output_error = "ontime_unreachable"
+            for runtime in self._timers.values():
+                if runtime["owned"]: runtime["error"] = "ontime_unreachable"
             self._processed = -1
             self._last_message = None
             self._secondary_selected = False
@@ -444,6 +556,7 @@ class MediaBridge:
                 if self._processed == version and not self._recovery:
                     return
             errors = []
+            self._poll_cache = None
             for operation in (self._export, self._sync_timer):
                 try:
                     operation(state)
@@ -510,72 +623,111 @@ class MediaBridge:
             self._last_ontime_action = {"status": "dry_run" if self.dry_run else "success", "path": path}
 
     def _sync_timer(self, state: dict) -> None:
-        self._recover_timer()
-        timer = self.config.get("timer", {})
-        mode = timer.get("media_timer_source", "off")
-        if not self.config.get("enabled", False) or mode == "off":
+        errors = []
+        recovery_error = None
+        try:
+            self._recover_timer()
+        except Exception as exc:
+            recovery_error = _output_failure(exc)
+            errors.append(recovery_error)
+        if self._recovery and "auxiliary_timers" not in self.config:
+            raise ValueError(recovery_error or "timer_recovery_required")
+        if not self.config.get("enabled", False):
+            if self._recovery:
+                raise ValueError("timer_recovery_required")
             return
-        if mode not in {"current_item", "playlist"}:
-            raise ValueError("invalid_timer_source")
+        for timer in auxiliary_outputs(self.config):
+            if not timer.get("enabled", True):
+                continue
+            index = timer.get("aux_timer_index", 1)
+            runtime = self._timers[index]
+            try:
+                if recovery_error and not (self._closed.is_set() and runtime["owned"]):
+                    raise ValueError(recovery_error)
+                if self._recovery and index in self._recovery["indices"]:
+                    raise ValueError("timer_recovery_required")
+                self._sync_auxiliary(state, timer, runtime)
+                runtime["error"] = None
+            except Exception as exc:
+                runtime["error"] = _output_failure(exc)
+                errors.append(runtime["error"])
+        timer = self.config.get("timer", {})
+        active = bool(state.get("available") and not state.get("stale") and state.get("state") in {"playing", "paused"})
+        message = timer.get("ontime_output") == "secondary_message" and timer.get("media_timer_source", "off") != "off"
+        if message and not recovery_error:
+            try:
+                self._secondary(state, {**timer, "change_stage_timer_secondary_source": False}, active)
+                self._message_error = None
+            except Exception as exc:
+                self._message_error = _output_failure(exc)
+                errors.append(self._message_error)
+        selected = self.config.get("stage_timer_source")
+        if selected is None and timer.get("change_stage_timer_secondary_source", False):
+            selected = "secondary" if message else f"aux{timer.get('aux_timer_index', 1)}"
+        if selected and selected != "off" and active and not self._secondary_selected:
+            eligible = message if selected == "secondary" else self._timers[int(selected[-1])]["owned"] and not self._timers[int(selected[-1])]["error"]
+            if eligible:
+                try:
+                    self._action(f"/api/message/timer?secondarySource={selected}")
+                    self._secondary_selected = True
+                    self._stage_error = None
+                except Exception as exc:
+                    self._stage_error = _output_failure(exc)
+                    errors.append(self._stage_error)
+        if self._recovery and not errors:
+            errors.append("timer_recovery_required")
+        if errors:
+            raise ValueError("; ".join(dict.fromkeys(errors)))
+
+    def _sync_auxiliary(self, state: dict, timer: dict, runtime_state: dict) -> None:
+        mode = timer["media_timer_source"]
         field = "remaining_ms" if mode == "current_item" else "playlist_remaining_ms"
         known = "remaining_known" if mode == "current_item" else "playlist_remaining_known"
-        active = (state.get("available") and not state.get("stale") and
-                  state.get("state") in {"playing", "paused"})
-        if timer.get("ontime_output", "auxiliary_timer") == "secondary_message":
-            self._secondary(state, timer, bool(active))
-            return
-        valid = active and state.get(known)
+        valid = (state.get("available") and not state.get("stale") and state.get("state") in {"playing", "paused"} and state.get(known))
         index = timer.get("aux_timer_index", 1)
-        if type(index) is not int or index not in {1, 2, 3}:
-            raise ValueError("invalid_aux_timer_index")
         prefix = f"/api/auxtimer/{index}"
         if not valid:
-            if self._timer_owned:
-                # A temporary hold retains ownership; process shutdown must release the slot.
+            if runtime_state["owned"]:
                 if timer.get("inactive_policy", "stop") == "keep_last" and not self._closed.is_set():
-                    if self._timer_state is not None:
+                    if runtime_state["state"] is not None:
                         self._action(prefix + "/pause")
-                        self._timer_state = None
+                        runtime_state["state"] = None
                     return
                 self._action(prefix + "/stop")
-                self._clear_ownership()
-                self._timer_owned = False
-                self._timer_signature = None
-                self._timer_state = None
+                self._clear_ownership(index)
+                runtime_state.update(owned=False, signature=None, state=None)
             return
         target = state[field]
         desired = "pause" if state["state"] == "paused" else "play"
         signature = (state.get("source_uuid"), state.get("current_item_id"), state.get("speed_percent"), state.get("snapshot_revision"))
         runtime = None
         if not self.dry_run:
-            poll = self._request("/api/poll")
-            if isinstance(poll, dict) and isinstance(poll.get("payload"), dict):
-                poll = poll["payload"]
+            poll = self._poll()
             runtime = poll.get(f"auxtimer{index}") if isinstance(poll, dict) else None
             if (not isinstance(runtime, dict) or (type(runtime.get("current")) not in {int, float} or
                     not math.isfinite(runtime["current"])) or
                     runtime.get("playback") not in {"start", "play", "pause", "stop"}):
                 raise ValueError("aux_timer_unavailable")
             runtime = {**runtime, "playback": "play" if runtime["playback"] == "start" else runtime["playback"]}
-        if not self._timer_owned and runtime is not None and runtime["playback"] != "stop":
+        if not runtime_state["owned"] and runtime is not None and runtime["playback"] != "stop":
             raise ValueError("aux_timer_in_use")
-        changed = self._timer_signature != signature
-        state_change = self._timer_state != state["state"]
+        changed = runtime_state["signature"] != signature
+        state_change = runtime_state["state"] != state["state"]
         aligned = runtime is None or (abs(runtime["current"] - target) <= 1500 and runtime.get("direction") == "count-down")
-        rebase = not self._timer_owned or not aligned or (changed and not state_change)
+        rebase = not runtime_state["owned"] or not aligned or (changed and not state_change)
         if rebase:
-            if not self._timer_owned:
+            if not runtime_state["owned"]:
                 self._save_ownership(index)
             # Stop before changing duration: never rely on running-duration semantics.
             try:
                 self._action(prefix + "/stop")
             except InterruptedError:
-                if not self._timer_owned:
-                    self._clear_ownership()
+                if not runtime_state["owned"]:
+                    self._clear_ownership(index)
                 raise
-            self._timer_owned = True
-            self._timer_signature = signature
-            self._timer_state = state["state"]
+            runtime_state["owned"] = True
+            runtime_state["signature"] = signature
+            runtime_state["state"] = state["state"]
             self._action(prefix + "/direction/count-down")
             self._action(prefix + f"/duration/{target}")
             self._action(prefix + "/start")
@@ -583,12 +735,9 @@ class MediaBridge:
                 self._action(prefix + "/pause")
         elif (runtime is None and state_change) or (runtime is not None and runtime["playback"] != desired):
             self._action(prefix + ("/pause" if desired == "pause" else "/start"))
-        if timer.get("change_stage_timer_secondary_source", False) and not self._secondary_selected:
-            self._action(f"/api/message/timer?secondarySource=aux{index}")
-            self._secondary_selected = True
-        self._timer_owned = True
-        self._timer_signature = signature
-        self._timer_state = state["state"]
+        runtime_state["owned"] = True
+        runtime_state["signature"] = signature
+        runtime_state["state"] = state["state"]
 
     def _secondary(self, state: dict, timer: dict, valid: bool) -> None:
         if not valid and timer.get("inactive_policy", "stop") == "keep_last":

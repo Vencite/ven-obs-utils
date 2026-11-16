@@ -38,7 +38,7 @@ class KeepLastTests(unittest.TestCase):
 
     def test_keep_last_preserves_ownership_and_journal(self):
         self.keep_last()
-        self.assertTrue(self.bridge._timer_owned)
+        self.assertTrue(self.bridge._timers[1]["owned"])
         self.assertTrue(self.path.exists())
         self.ontime.calls.clear()
         self.send(unavailable("disconnected"))
@@ -69,7 +69,7 @@ class KeepLastTests(unittest.TestCase):
         self.ontime.calls.clear()
         self.send(unavailable("disconnected"))
         self.assertEqual(self.ontime.calls, ["/api/auxtimer/1/stop"])
-        self.assertFalse(self.bridge._timer_owned)
+        self.assertFalse(self.bridge._timers[1]["owned"])
         self.assertFalse(self.path.exists())
 
     def test_normal_close_stops_keep_last_and_allows_restart(self):

@@ -20,7 +20,7 @@ from urllib.parse import quote
 from urllib.request import Request, urlopen
 
 
-from media_bridge import MediaBridge
+from media_bridge import MediaBridge, validate_config
 
 DEFAULT_BREAK_CUE_REGEX = r"^BRK_\d+$"
 LOG = logging.getLogger("ontime-break-sync")
@@ -72,7 +72,7 @@ def load_config(path: Path) -> Config:
         request_timeout_seconds=request_timeout_seconds,
         server_host=server_host,
         server_port=server_port,
-        media_bridge=data.get("media_bridge", {}),
+        media_bridge=validate_config(data.get("media_bridge", {})),
         ownership_path=path.resolve().with_suffix(".timer-owner.json"),
     )
 
