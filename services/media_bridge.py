@@ -270,6 +270,8 @@ class MediaBridge:
         if not isinstance(session, str) or not session or len(session) > 128:
             raise ValueError("invalid_session")
         with self._lock:
+            if self._closed.is_set():
+                raise ValueError("bridge_closed")
             if epoch is None:
                 epoch = self._session_epoch + 1
             if not _integer(epoch):
@@ -299,6 +301,8 @@ class MediaBridge:
             raise ValueError("invalid_envelope")
         snapshot = validate_snapshot(envelope.get("snapshot"))
         with self._lock:
+            if self._closed.is_set():
+                raise ValueError("bridge_closed")
             if not self._session or envelope.get("session") != self._session:
                 raise ValueError("wrong_session")
             if envelope["sequence"] <= self._sequence:
@@ -320,6 +324,8 @@ class MediaBridge:
     def heartbeat(self, envelope: dict) -> dict:
         """Renew transport liveness without treating an old snapshot as new data."""
         with self._lock:
+            if self._closed.is_set():
+                raise ValueError("bridge_closed")
             self._expire_locked()
             if (not isinstance(envelope, dict) or not self._session or
                     envelope.get("session") != self._session or not _integer(envelope.get("sequence"))):
@@ -506,17 +512,17 @@ class MediaBridge:
         return name.replace("\\", "/").rsplit("/", 1)[-1].replace("\r", " ").replace("\n", " ")
 
     def start(self) -> None:
-        if (not self.config.get("enabled") and not self._recovery) or self._thread:
+        if (not self.config.get("enabled") and not self._recovery) or self._thread or self._closed.is_set():
             return
         self._thread = threading.Thread(target=self._run, name="mps-outputs", daemon=True)
         self._thread.start()
 
     def close(self) -> None:
         with self._lock:
+            self._closed.set()
             self._snapshot = unavailable("shutdown")
             self._output_generation += 1
             self._version += 1
-        self._closed.set()
         self._wake.set()
         if self._thread:
             self._thread.join()
@@ -662,8 +668,10 @@ class MediaBridge:
                 self._message_error = _output_failure(exc)
                 errors.append(self._message_error)
         selected = self.config.get("stage_timer_source")
-        if selected is None and timer.get("change_stage_timer_secondary_source", False):
-            selected = "secondary" if message else f"aux{timer.get('aux_timer_index', 1)}"
+        if selected is None and timer.get("change_stage_timer_secondary_source") is True and timer.get("media_timer_source") in ("current_item", "playlist"):
+            candidate = "secondary" if message else f"aux{timer.get('aux_timer_index', 1)}"
+            if candidate == "secondary" or any(row.get("enabled", True) and candidate == f"aux{row.get('aux_timer_index', 1)}" for row in auxiliary_outputs(self.config)):
+                selected = candidate
         if selected and selected != "off" and active and not self._secondary_selected:
             eligible = message if selected == "secondary" else self._timers[int(selected[-1])]["owned"] and not self._timers[int(selected[-1])]["error"]
             if eligible:

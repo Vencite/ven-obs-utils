@@ -30,7 +30,8 @@ baseline without replaying missed transitions.
 ## Media outputs (develop)
 
 Follow a Media Playlist Source in Program or select a fixed source. Send its
-remaining time to an Ontime auxiliary timer, compose a secondary message, or
+current-file and playlist time to up to three independent Ontime auxiliary timers,
+compose a secondary message alongside them, or
 export the current filename to TXT. Outputs are optional and disabled by default.
 See [media setup and testing](MEDIA-BRIDGE.md).
 

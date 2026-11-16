@@ -305,8 +305,8 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
         _ = stack(stageBody, spacing: 8)
         stageSource.autoenablesItems = false
         stageSource.addItems(withTitles: ["Do not change automatically", "Aux 1", "Aux 2", "Aux 3", "Secondary message"])
-        stageBody.addArrangedSubview(row("Stage Timer secondary area", stageSource))
-        stageBody.addArrangedSubview(note("Only this one selected source is shown. Otherwise choose it in Ontime."))
+        stageBody.addArrangedSubview(row("Stage Timer", stageSource))
+        stageBody.addArrangedSubview(note("Secondary area: show this one selected source, or choose it in Ontime."))
         mediaBody.addArrangedSubview(stageBody)
         outputStatus.font = .systemFont(ofSize: 12)
         outputStatus.textColor = .secondaryLabelColor
@@ -479,7 +479,8 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
             let index = row.slot.indexOfSelectedItem + 1
             let current = states.first { $0["aux_timer_index"] as? Int == index }
             let status = row.enabled.state == .off ? "disabled" : current?["output_status"] as? String ?? (outputState["output_status"] as? String == "unavailable" ? "unavailable" : "pending")
-            row.status.stringValue = "Aux \(index): " + status.replacingOccurrences(of: "_", with: " ") +
+            let label = status == "unknown_remaining" ? "waiting for known duration" : status.replacingOccurrences(of: "_", with: " ")
+            row.status.stringValue = "Aux \(index): " + label +
                 ((current?["output_error"] as? String).map { " — " + $0.replacingOccurrences(of: "_", with: " ") } ?? "")
             row.status.textColor = status == "error" ? .systemRed : .secondaryLabelColor
         }
@@ -557,7 +558,8 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
         txt["clear_policy"] = txtPolicy.indexOfSelectedItem == 1 ? "keep_last" : "clear_when_inactive"
         media["txt"] = txt
         var timer = media["timer"] as? [String: Any] ?? [:]
-        timer["media_timer_source"] = timerEnabled.state == .on ? "playlist" : "off"
+        let previousMode = timer["media_timer_source"] as? String ?? "off"
+        timer["media_timer_source"] = timerEnabled.state == .on ? (["current_item", "playlist"].contains(previousMode) ? previousMode : "playlist") : "off"
         timer["ontime_output"] = "secondary_message"
         timer["inactive_policy"] = inactivePolicy.indexOfSelectedItem == 1 ? "keep_last" : "stop"
         timer["secondary_message_template"] = secondaryTemplate.stringValue

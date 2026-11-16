@@ -99,7 +99,7 @@ struct SettingsWindowLayoutTests {
         controller.updateMediaStatus(["available": true, "source_name": "Test playlist", "current_file": "B_GREEN.mp4", "remaining_ms": 45000, "playlist_remaining_ms": 75000], output: "Multiple outputs", outputs: ["auxiliary_timers": [
             ["aux_timer_index": 1, "output_status": "synced"], ["aux_timer_index": 2, "output_status": "unknown_remaining"]]])
         precondition(rows()[0].status.stringValue.contains("synced"))
-        precondition(rows()[1].status.stringValue.contains("unknown remaining"))
+        precondition(rows()[1].status.stringValue.contains("waiting for known duration"))
         variables.scrollToVisible(variables.bounds)
         try snapshot("vos-message-settings.png")
         button("Send a secondary message").performClick(nil)
@@ -114,6 +114,26 @@ struct SettingsWindowLayoutTests {
         precondition(outputs[1]["inactive_policy"] as? String == "keep_last")
         precondition(result.mediaBridge["stage_timer_source"] as? String == "aux2")
         controller.close()
+        var messageConfig = config
+        messageConfig.mediaBridge = ["enabled": true, "timer": ["ontime_output": "secondary_message",
+            "media_timer_source": "current_item", "inactive_policy": "keep_last",
+            "secondary_message_template": "Now: {current_file}", "change_stage_timer_secondary_source": true]]
+        var migratedMessage: SettingsDraft?
+        let messageController = SettingsWindowController(draft: SettingsDraft(config: messageConfig, password: ""),
+            onSave: { value in _ = try value.applying(to: messageConfig); migratedMessage = value }, onOpenConfig: {})
+        func findSave(_ node: NSView) -> NSButton? {
+            if let button = node as? NSButton, button.title == "Save & Reconnect" { return button }
+            return node.subviews.lazy.compactMap { findSave($0) }.first
+        }
+        findSave(messageController.window!.contentView!)!.performClick(nil)
+        guard let migratedMessage else { fatalError("Legacy secondary message must save") }
+        let message = migratedMessage.mediaBridge["timer"] as! [String: Any]
+        precondition(message["media_timer_source"] as? String == "current_item")
+        precondition(message["secondary_message_template"] as? String == "Now: {current_file}")
+        precondition(message["inactive_policy"] as? String == "keep_last")
+        precondition(migratedMessage.mediaBridge["stage_timer_source"] as? String == "secondary")
+        precondition((migratedMessage.mediaBridge["auxiliary_timers"] as! [[String: Any]]).isEmpty)
+        messageController.close()
         print("SettingsWindowLayoutTests: PASS")
     }
 }

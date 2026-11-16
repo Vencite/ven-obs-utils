@@ -109,8 +109,10 @@ class MultiTimerTests(unittest.TestCase):
         self.assertEqual(self.statuses()[1]['output_status'], 'error')
         self.assertEqual(self.statuses()[2]['output_status'], 'synced')
         self.fake.fail = None
+        self.fake.calls.clear()
         self.send()
         self.assertEqual(self.statuses()[1]['output_status'], 'synced')
+        self.assertFalse(any(p.startswith('/api/auxtimer/2/') for p in self.fake.calls), 'Retrying one slot must not restart the healthy timer')
 
     def test_stop_keep_last_and_shutdown(self):
         self.send()
@@ -245,4 +247,76 @@ class MultiTimerTests(unittest.TestCase):
         self.assertNotIn('/api/auxtimer/1/start', self.fake.calls)
         self.fake.before = None
         self.bridge.process_outputs()
+        self.assertFalse(self.path.exists())
+
+    def test_uncertain_durable_write_is_preserved_when_next_slot_starts(self):
+        persist = self.bridge._persist_ownership
+        def uncertain(slots):
+            persist(slots)
+            if slots == {1}:
+                raise OSError('simulated failure after replace')
+        with patch.object(self.bridge, '_persist_ownership', side_effect=uncertain):
+            self.send()
+        self.assertEqual(json.loads(self.path.read_text())['indices'], [1, 2])
+        self.assertEqual(self.fake.slots[1].timer['playback'], 'stop')
+        self.assertEqual(self.fake.slots[2].timer['playback'], 'start')
+        self.assertFalse(any(p.startswith('/api/auxtimer/1/') for p in self.fake.calls))
+
+    def test_shutdown_stops_owned_slot_even_if_orphan_poll_fails(self):
+        self.path.write_text(json.dumps({'target': 'host', 'index': 1}))
+        self.fake.slots[1].timer['playback'] = 'start'
+        restarted = self.new()
+        restarted.reset_session('s')
+        restarted.ingest({'session': 's', 'sequence': 1, 'snapshot': snapshot()})
+        restarted.process_outputs()
+        self.fake.calls.clear()
+        self.fake.fail = '/api/poll'
+        restarted._recovery_due = 0
+        restarted.close()
+        self.assertEqual(self.fake.slots[1].timer['playback'], 'start')
+        self.assertEqual(self.fake.slots[2].timer['playback'], 'stop')
+        self.assertIn('/api/auxtimer/2/stop', self.fake.calls)
+        self.assertEqual(json.loads(self.path.read_text())['indices'], [1])
+
+    def test_ontime_loss_and_reconnect_resynchronizes_both_paused_slots(self):
+        self.send(snapshot(state='paused'))
+        self.bridge.ontime_unavailable()
+        self.fake.fail = '/api/poll'
+        self.bridge.process_outputs()
+        self.assertEqual([self.statuses()[i]['output_status'] for i in (1, 2)], ['error', 'error'])
+        self.fake.fail = None
+        for slot in self.fake.slots.values():
+            slot.timer.update(playback='stop', current=0, duration=0)
+        self.seq += 1
+        self.bridge.heartbeat({'session': 's', 'sequence': self.seq})
+        self.bridge.process_outputs()
+        self.assertEqual([self.fake.slots[i].timer['playback'] for i in (1, 2)], ['pause', 'pause'])
+        self.assertEqual([self.statuses()[i]['output_status'] for i in (1, 2)], ['synced', 'synced'])
+
+    def test_unused_legacy_display_settings_cannot_override_new_outputs(self):
+        for legacy in ({'media_timer_source': 'off', 'aux_timer_index': 1},
+                       {'media_timer_source': 'playlist', 'aux_timer_index': 'unused-invalid'}):
+            cfg = config()
+            cfg['timer'] = {**legacy, 'change_stage_timer_secondary_source': True}
+            bridge = self.new(cfg, dry=True)
+            bridge.reset_session('s')
+            bridge.ingest({'session': 's', 'sequence': 1, 'snapshot': snapshot()})
+            bridge.process_outputs()
+            self.assertNotIn('output_error', bridge.status())
+            self.assertFalse(bridge.status().get('last_ontime_action', {}).get('path', '').startswith('/api/message/timer?'))
+
+    def test_inflight_snapshot_cannot_replace_shutdown_during_slot_cleanup(self):
+        self.send()
+        accepted = []
+        def before(path):
+            if path in ('/api/auxtimer/1/stop', '/api/auxtimer/2/stop'):
+                try:
+                    self.bridge.ingest({'session': 's', 'sequence': 100, 'snapshot': snapshot(snapshot_revision=99)})
+                    accepted.append(True)
+                except ValueError:
+                    accepted.append(False)
+        self.fake.before = before
+        self.bridge.close()
+        self.assertEqual(accepted, [False, False], 'Closing bridge must reject in-flight ingestion')
+        self.assertEqual([self.fake.slots[i].timer['playback'] for i in (1, 2)], ['stop', 'stop'])
         self.assertFalse(self.path.exists())

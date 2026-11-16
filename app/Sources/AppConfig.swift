@@ -133,8 +133,11 @@ struct AppConfig {
         if let selected = media["stage_timer_source"] as? String { return selected }
         let timer = media["timer"] as? [String: Any] ?? [:]
         guard timer["change_stage_timer_secondary_source"] as? Bool == true,
-              timer["media_timer_source"] as? String ?? "off" != "off" else { return "off" }
-        return timer["ontime_output"] as? String == "secondary_message" ? "secondary" : "aux\(timer["aux_timer_index"] as? Int ?? 1)"
+              ["current_item", "playlist"].contains(timer["media_timer_source"] as? String ?? "off") else { return "off" }
+        if timer["ontime_output"] as? String == "secondary_message" { return "secondary" }
+        let index = timer["aux_timer_index"] as? Int ?? (timer["aux_timer_index"] == nil ? 1 : 0)
+        guard Self.auxiliaryTimers(in: media).contains(where: { $0["enabled"] as? Bool != false && ($0["aux_timer_index"] as? Int ?? 1) == index }) else { return "off" }
+        return "aux\(index)"
     }
 
     func validated() throws -> AppConfig {
