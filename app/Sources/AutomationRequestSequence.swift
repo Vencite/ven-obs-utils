@@ -30,6 +30,10 @@ struct AutomationRequestSequence {
         return next
     }
 
+    mutating func discardPending() {
+        pending.removeAll()
+    }
+
     mutating func reset() {
         current = nil
         pending.removeAll()

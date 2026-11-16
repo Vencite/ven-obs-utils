@@ -153,6 +153,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         obsClient.onEvent = { [weak self] type, data in self?.mediaBridge.receive(type: type, data: data) }
         obsClient.onStatusChange = { [weak self] status in
             guard let self else { return }
+            if self.obsConnected && status != .connected {
+                self.automationRequests.discardPending()
+            }
             switch status {
             case .connected:
                 self.obsConnected = true
