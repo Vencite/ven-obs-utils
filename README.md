@@ -93,14 +93,30 @@ builds the macOS application. Automated checks do not replace live setup testing
 
 The helper binds to `127.0.0.1:8765` by default:
 
-| GET path | Purpose |
+| Method and path | Purpose |
 | --- | --- |
-| `/ontime/break` | Enter break (`/break` is a legacy alias) |
-| `/ontime/leave-break` | Leave break |
-| `/health`, `/status` | Connection and runtime status |
+| `POST /ontime/break` | Enter break (`/break` is a legacy alias) |
+| `POST /ontime/leave-break` | Leave break |
+| `GET /health`, `GET /status` | Connection and runtime status |
 
-These are optional debugging/automation endpoints; normal operation uses the
-OBS connection. Repeated triggers are debounced. There is no public media-control API.
+State-changing routes require `Authorization: Bearer <token>` and a loopback
+client. The app supplies its existing random per-run IPC secret automatically;
+a standalone helper must receive `VEN_MEDIA_IPC_TOKEN` in its environment.
+Without that secret the automation endpoints are denied. The helper now refuses
+LAN binds even when media outputs are disabled. Repeated triggers are debounced.
+There is no public media-control API.
+
+Migration for external callers (including Companion HTTP actions): the repository
+contains no external caller configuration, but these documented paths may have
+been used externally. Preserve the path, change GET to POST, and set the Bearer
+header. `/break` remains an authenticated POST alias. GET returns 405 and never
+executes an action; there is no insecure compatibility switch. For standalone
+use, generate a secret (for example `python3 -c 'import secrets; print(secrets.token_urlsafe(32))'`),
+provide it to the helper via `VEN_MEDIA_IPC_TOKEN`, and configure the same secret
+in the local caller. Do not put it in the URL or commit it. The GUI app rotates
+its private token at launch; external clients cannot depend on a stable GUI token.
+If a caller cannot send POST with headers, migrate it before using this build.
+Normal Program-scene automation is updated automatically.
 
 ## Releases
 
