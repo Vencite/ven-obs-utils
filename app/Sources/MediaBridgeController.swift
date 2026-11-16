@@ -19,11 +19,19 @@ final class MediaBridgeController {
     private var resolveTask: Task<Void, Never>?
     private var flushTask: Task<Void, Never>?
     private var deliveryEpoch = 0
-    private var receivedAt = Date.distantPast
+    private let now: () -> TimeInterval
+    private let http: URLSession
+    private var receivedAt = -Double.infinity
+    private var lastProbeAt = -Double.infinity
     private var dirty = false
     private var pendingEvent: [String: Any]?
 
-    init(obs: OBSWebSocketClient) { self.obs = obs }
+    init(obs: OBSWebSocketClient, now: @escaping () -> TimeInterval = { ProcessInfo.processInfo.systemUptime },
+         http: URLSession = .shared) {
+        self.obs = obs
+        self.now = now
+        self.http = http
+    }
 
     func configure(_ config: [String: Any], port: Int, token: String) {
         deliveryEpoch += 1
@@ -185,35 +193,46 @@ final class MediaBridgeController {
 
     private func publish(_ value: [String: Any]) {
         snapshot = value
-        if value["available"] as? Bool == true { receivedAt = Date() }
+        if value["available"] as? Bool == true { receivedAt = now() }
         onState?(value)
         dirty = true
-        heartbeat()
+        heartbeat(allowProbe: false)
     }
 
-    func heartbeat() {
+    func heartbeat(allowProbe: Bool = true) {
         guard config["enabled"] as? Bool == true, !token.isEmpty, flushTask == nil else { return }
-        if snapshot["state"] as? String == "playing", Date().timeIntervalSince(receivedAt) > 5, resolveTask == nil {
-            refresh()
-            return
+        // Idle MPS states need the same authoritative OBS liveness check as playback.
+        if allowProbe, connected, now() - receivedAt >= 3, now() - lastProbeAt >= 3, resolveTask == nil {
+            lastProbeAt = now()
+            if let uuid = selectedUUID { probe(uuid) }
+            else { refresh(); return }
         }
+        if snapshot["available"] as? Bool == true, now() - receivedAt > 5 {
+            snapshot = MPSState.unavailable(reason: "OBS telemetry unavailable")
+            onState?(snapshot)
+            dirty = true
+        }
+        guard !helperReady || dirty || snapshot["available"] as? Bool == true else { return }
         let epoch = deliveryEpoch
         flushTask = Task { [weak self] in
             guard let self else { return }
             defer { if deliveryEpoch == epoch { flushTask = nil } }
             do {
                 if !helperReady {
-                    _ = try await ipc("/media/_session", body: ["session": session])
+                    _ = try await ipc("/media/_session", body: ["session": session, "epoch": epoch])
                     guard epoch == deliveryEpoch else { return }
                     helperReady = true
                     // A restarted helper resumes only after a new authoritative OBS snapshot.
                     if connected { refresh() }
                 }
                 repeat {
+                    let sendSnapshot = dirty
                     dirty = false
                     sequence += 1
                     let currentSession = session
-                    _ = try await ipc("/media/_snapshot", body: ["session": currentSession, "sequence": sequence, "snapshot": snapshot])
+                    var body: [String: Any] = ["session": currentSession, "sequence": sequence]
+                    if sendSnapshot { body["snapshot"] = snapshot }
+                    _ = try await ipc(sendSnapshot ? "/media/_snapshot" : "/media/_heartbeat", body: body)
                     guard epoch == deliveryEpoch, currentSession == session else { return }
                 } while dirty
 
@@ -222,6 +241,46 @@ final class MediaBridgeController {
                 helperReady = false
                 snapshot = MPSState.unavailable(reason: "Media helper unavailable")
                 onState?(snapshot)
+            }
+        }
+    }
+
+    private func probe(_ uuid: String) {
+        let current = generation
+        resolveTask = Task { [weak self] in
+            guard let self else { return }
+            do {
+                let result = try await obs.request("CallVendorRequest", data: [
+                    "vendorName": "media-playlist-source", "requestType": "GetPlaylistState",
+                    "requestData": ["source_uuid": uuid],
+                ])
+                guard generation == current, !Task.isCancelled else { return }
+                guard let payload = result["responseData"] as? [String: Any],
+                      MPSState.boolean(payload["success"]) == true else {
+                    throw MPSStateError.invalid("MPS Vendor API unavailable")
+                }
+                let state = try MPSState(payload).payload
+                guard state["source_uuid"] as? String == uuid else {
+                    throw MPSStateError.invalid("MPS source mismatch")
+                }
+                if (MPSState.integer(state["snapshot_revision"]) ?? 0) <
+                    (MPSState.integer(snapshot["snapshot_revision"]) ?? 0) {
+                    refresh()
+                    return
+                }
+                resolveTask = nil
+                let event = pendingEvent
+                pendingEvent = nil
+                var latest = state
+                if let event, (MPSState.integer(event["snapshot_revision"]) ?? 0) >=
+                    (MPSState.integer(state["snapshot_revision"]) ?? 0) { latest = event }
+                receivedAt = now()
+                if !NSDictionary(dictionary: latest).isEqual(to: snapshot) { publish(latest) }
+            } catch {
+                guard generation == current, !Task.isCancelled else { return }
+                resolveTask = nil
+                pendingEvent = nil
+                publish(MPSState.unavailable(reason: error.localizedDescription))
             }
         }
     }
@@ -237,7 +296,7 @@ final class MediaBridgeController {
             request.setValue("application/json", forHTTPHeaderField: "Content-Type")
             request.httpBody = try JSONSerialization.data(withJSONObject: body)
         }
-        let (data, response) = try await URLSession.shared.data(for: request)
+        let (data, response) = try await http.data(for: request)
         guard (response as? HTTPURLResponse)?.statusCode == 200,
               let result = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
             throw MPSStateError.invalid("Media helper rejected state")

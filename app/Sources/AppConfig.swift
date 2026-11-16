@@ -65,6 +65,9 @@ struct AppConfig {
             throw ConfigValidationError.invalid("Config root must be a JSON object")
         }
 
+        if let media = root["media_bridge"], !(media is [String: Any]) {
+            throw ConfigValidationError.invalid("Media bridge configuration must be an object")
+        }
         let ontime = root["ontime"] as? [String: Any] ?? [:]
         let server = root["server"] as? [String: Any] ?? [:]
         let safety = root["safety"] as? [String: Any] ?? [:]
@@ -148,10 +151,14 @@ struct AppConfig {
         } catch {
             throw ConfigValidationError.invalid("Ontime break CUE regex is invalid")
         }
+        guard ["127.0.0.1", "localhost"].contains(serverHost) else {
+            throw ConfigValidationError.invalid("Local service requires a loopback address")
+        }
         let media = mediaBridge
         if let enabled = media["enabled"], !Self.isBoolean(enabled) {
             throw ConfigValidationError.invalid("Media bridge enabled must be a boolean")
         }
+        guard media["enabled"] as? Bool == true else { return self }
         for section in ["txt", "json", "timer"] {
             if let value = media[section], !(value is [String: Any]) {
                 throw ConfigValidationError.invalid("Invalid media \(section) configuration")
@@ -163,8 +170,10 @@ struct AppConfig {
             }
         }
         if media["enabled"] as? Bool == true {
-            guard ["127.0.0.1", "localhost"].contains(serverHost) else {
-                throw ConfigValidationError.invalid("Media bridge requires a loopback helper address")
+            for key in ["source_mode", "source_uuid", "source_name"] {
+                if let value = media[key], !(value is String) {
+                    throw ConfigValidationError.invalid("Invalid media source field")
+                }
             }
             let mode = media["source_mode"] as? String ?? "follow_program"
             guard ["explicit", "follow_program"].contains(mode) else {
@@ -194,6 +203,21 @@ struct AppConfig {
                 throw ConfigValidationError.invalid("TXT and JSON export paths must differ")
             }
             let timer = media["timer"] as? [String: Any] ?? [:]
+            for (section, keys) in [(timer, ["media_timer_source", "ontime_output", "inactive_policy", "secondary_message_template"]),
+                                    (txt, ["clear_policy"])] {
+                for key in keys {
+                    if let value = section[key], !(value is String) {
+                        throw ConfigValidationError.invalid("Invalid media setting type")
+                    }
+                }
+            }
+            if let value = timer["aux_timer_index"] {
+                guard !Self.isBoolean(value), let number = value as? NSNumber,
+                      String(cString: number.objCType) != "d", String(cString: number.objCType) != "f",
+                      number.doubleValue == Double(number.intValue), (1...3).contains(number.intValue) else {
+                    throw ConfigValidationError.invalid("Invalid auxiliary timer index")
+                }
+            }
             guard Self.validMediaTemplate(timer["secondary_message_template"] as? String ?? "{current_file}") else {
                 throw ConfigValidationError.invalid("Invalid media message template")
             }

@@ -31,6 +31,10 @@ enum StatusPresentation {
 
 
 enum MediaOutputPresentation {
+    static func unavailable(enabled: Bool) -> [String: Any] {
+        ["output_status": enabled ? "unavailable" : "disabled"]
+    }
+
     static func summary(_ state: [String: Any]) -> String {
         let status = state["output_status"] as? String ?? "waiting_for_snapshot"
         if let error = state["output_error"] as? String, !error.isEmpty {
@@ -38,6 +42,12 @@ enum MediaOutputPresentation {
                 return "Error: Ontime returned HTTP " + error.replacingOccurrences(of: "ontime_http_", with: "")
             }
             switch error {
+            case "timer_recovery_required":
+                let slot = (state["recovery_timer_index"] as? Int).map { " \($0)" } ?? ""
+                return "Recovery: review auxiliary timer" + slot + " in Ontime"
+            case "timer_recovery_target_changed": return "Recovery: previous Ontime target needs operator review"
+            case "ontime_unreachable": return "Error: Ontime unavailable"
+            case "aux_timer_in_use": return "Error: auxiliary timer is in use"
             case "aux_timer_unavailable": return "Error: selected auxiliary timer is unavailable"
             case "export_failed", "file_export_failed", "filesystem_error": return "Error: could not write the export file"
             default: return "Error: " + error.replacingOccurrences(of: "_", with: " ")
@@ -45,6 +55,8 @@ enum MediaOutputPresentation {
         }
         switch status {
         case "disabled": return "Disabled"
+        case "unavailable": return "Helper unavailable"
+        case "connected": return "Connected — waiting for output confirmation"
         case "off": return "Ontime output off"
         case "waiting_for_snapshot": return "Waiting for OBS playlist data"
         case "inactive": return "No active media — inactive policy applied"

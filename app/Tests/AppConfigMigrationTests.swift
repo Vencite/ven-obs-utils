@@ -3,11 +3,43 @@ import Foundation
 @main
 struct AppConfigMigrationTests {
     static func main() throws {
+        try testMediaValidation()
         try testLegacyConfigIsMigratedWithBackup()
         try testCurrentConfigIsLeftUntouched()
         try testLoadAutomaticallyMigratesLegacyConfig()
         try testVersionTwoMediaConfigPreservesOutputs()
         print("AppConfigMigrationTests: PASS")
+    }
+
+    static func testMediaValidation() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let path = directory.appendingPathComponent("config.json")
+        let invalid: [[String: Any]] = [
+            ["timer": ["media_timer_source": "invalid"]], ["timer": ["aux_timer_index": true]],
+            ["timer": ["aux_timer_index": 4]], ["timer": ["ontime_output": 3]],
+            ["timer": ["secondary_message_template": 3]], ["txt": "invalid"],
+            ["source_mode": "invalid"], ["source_mode": "explicit"],
+            ["json": ["enabled": true, "path": "relative"]],
+        ]
+        for fields in invalid {
+            for enabled in [false, true] {
+                var media = fields
+                media["enabled"] = enabled
+                let root: [String: Any] = ["config_version": 3,
+                    "ontime": ["base_url": "http://localhost:4001"], "media_bridge": media]
+                try JSONSerialization.data(withJSONObject: root).write(to: path)
+                do {
+                    _ = try AppConfig.load(from: path).validated()
+                    assert(!enabled, "Invalid active media configuration accepted: \(fields)")
+                } catch {
+                    assert(enabled, "Disabled media blocked the helper: \(error)")
+                }
+            }
+        }
+        try Data(#"{"config_version":3,"ontime":{"base_url":"http://localhost:4001"},"media_bridge":{"enabled":true}}"#.utf8).write(to: path)
+        _ = try AppConfig.load(from: path).validated()
     }
 
     static func testVersionTwoMediaConfigPreservesOutputs() throws {

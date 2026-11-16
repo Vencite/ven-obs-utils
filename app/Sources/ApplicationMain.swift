@@ -13,6 +13,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private lazy var mediaBridge = MediaBridgeController(obs: obsClient)
     private let mediaIPCToken = UUID().uuidString + UUID().uuidString
     private var latestMediaState: [String: Any] = [:]
+    private var statusRevision = 0
     private var latestMediaOutput: [String: Any] = [:]
     private let mediaFileItem = NSMenuItem(title: "Playing: —", action: nil, keyEquivalent: "")
     private let mediaTimeItem = NSMenuItem(title: "Remaining: —", action: nil, keyEquivalent: "")
@@ -21,6 +22,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var settingsController: SettingsWindowController?
     private var currentConfig: AppConfig?
     private var automationRequests = AutomationRequestSequence()
+    private var automationEpoch = 0
 
     private var obsConnected = false
     private var ontimeConnected = false
@@ -224,6 +226,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func configureMediaHelper() {
+        automationEpoch += 1
+        automationRequests.reset()
+        statusRevision += 1
+        latestMediaOutput = MediaOutputPresentation.unavailable(enabled: currentConfig?.mediaBridge["enabled"] as? Bool == true)
+        updateMediaPresentation()
         service?.environment = ["VEN_MEDIA_IPC_TOKEN": mediaIPCToken]
         guard let config = currentConfig else { return }
         mediaBridge.configure(config.mediaBridge, port: config.serverPort, token: mediaIPCToken)
@@ -290,14 +297,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return
         }
 
+        let epoch = automationEpoch
         showWorkingIcon()
         var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("Bearer \(mediaIPCToken)", forHTTPHeaderField: "Authorization")
         request.timeoutInterval = max(1.0, config.requestTimeoutSeconds + 0.5)
         request.cachePolicy = .reloadIgnoringLocalCacheData
 
         URLSession.shared.dataTask(with: request) { [weak self] data, response, error in
             DispatchQueue.main.async {
-                guard let self else { return }
+                guard let self, self.automationEpoch == epoch else { return }
                 self.handleAutomationResponse(
                     data: data,
                     response: response,
@@ -383,6 +393,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func refreshStatus() {
+        statusRevision += 1
+        let revision = statusRevision
         guard let url = URL(string: "http://127.0.0.1:\(configuredPort())/status") else { return }
         var request = URLRequest(url: url)
         request.timeoutInterval = 1.4
@@ -393,6 +405,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             guard error == nil, let data,
                   let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
                 DispatchQueue.main.async {
+                    guard self.statusRevision == revision else { return }
+                    self.latestMediaOutput = MediaOutputPresentation.unavailable(enabled: self.currentConfig?.mediaBridge["enabled"] as? Bool == true)
+                    self.updateMediaPresentation()
                     self.serviceStatusItem.title = "Service: unavailable"
                     self.ontimeStatusItem.title = "Ontime: unknown"
                     self.ontimeEventItem.title = "Ontime event: -"
@@ -404,6 +419,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
 
             DispatchQueue.main.async {
+                guard self.statusRevision == revision else { return }
                 self.applyStatus(json)
             }
         }.resume()
@@ -415,10 +431,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let mode = json["mode"] as? String ?? "unknown"
 
         serviceStatusItem.title = "Service: running"
-        if let media = json["media"] as? [String: Any] {
-            latestMediaOutput = media
-            updateMediaPresentation()
-        }
+        latestMediaOutput = json["media"] as? [String: Any] ??
+            MediaOutputPresentation.unavailable(enabled: currentConfig?.mediaBridge["enabled"] as? Bool == true)
+        updateMediaPresentation()
         modeItem.title = "Mode: " + (mode == "live" ? "LIVE" : "DRY RUN")
         ontimeConnected = ontime == "connected"
 

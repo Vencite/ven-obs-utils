@@ -284,7 +284,7 @@ class MediaBridgeTests(unittest.TestCase):
         self.assertFalse(worker.is_alive())
         self.assertEqual(calls, ["/api/poll"])
         bridge.process_outputs()
-        self.assertEqual(calls[-1], "/api/auxtimer/1/stop")
+        self.assertEqual(calls, ["/api/poll"], "A cancelled acquisition must not stop an unowned timer")
 
     def test_worker_shutdown_stops_reserved_timer(self):
         started = threading.Event()
@@ -307,10 +307,10 @@ class MediaBridgeTests(unittest.TestCase):
     def test_malformed_config_cannot_enable_any_outputs(self):
         for value in (None, [], "yes", {"enabled": "false"}, {"enabled": 1},
                       {"enabled": True, "timer": []}, {"enabled": True, "txt": "yes"},
-                      {"json": {"enabled": 1}},
-                      {"timer": {"aux_timer_index": True}},
-                      {"timer": {"media_timer_source": "guessed"}},
-                      {"txt": {"enabled": True, "path": "relative"}}):
+                      {"enabled": True, "json": {"enabled": 1}},
+                      {"enabled": True, "timer": {"aux_timer_index": True}},
+                      {"enabled": True, "timer": {"media_timer_source": "guessed"}},
+                      {"enabled": True, "txt": {"enabled": True, "path": "relative"}}):
             with self.subTest(value=value), self.assertRaises(ValueError):
                 MediaBridge(value, False, self.ontime)
         with self.assertRaises(ValueError):

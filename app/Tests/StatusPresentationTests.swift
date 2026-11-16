@@ -32,6 +32,14 @@ struct StatusPresentationTests {
         assert(MediaOutputPresentation.summary(["output_status": "synced", "ontime_output": "secondary_message"]) == "Secondary message updated")
         assert(MediaOutputPresentation.summary(["output_status": "error", "output_error": "ontime_http_403"]).contains("HTTP 403"))
         assert(MediaOutputPresentation.summary(["output_status": "unknown_remaining"]).contains("unknown"))
+        let lost = MediaOutputPresentation.unavailable(enabled: true)
+        assert(lost["output_status"] as? String == "unavailable")
+        assert(lost["output_error"] == nil && lost["last_ontime_action"] == nil)
+        assert(MediaOutputPresentation.summary(lost) == "Helper unavailable")
+        assert(MediaOutputPresentation.summary(MediaOutputPresentation.unavailable(enabled: false)) == "Disabled")
+        assert(MediaOutputPresentation.summary(["output_status": "pending"]).contains("Waiting"))
+        assert(MediaOutputPresentation.summary(["output_status": "connected"]).contains("confirmation"))
+        assert(MediaOutputPresentation.summary(["output_status": "synced"]) == "Auxiliary timer updated")
         print("StatusPresentationTests: PASS")
     }
 }

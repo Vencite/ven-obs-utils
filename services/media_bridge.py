@@ -78,6 +78,18 @@ def _validated_config(value: Any) -> dict:
     if not isinstance(value, dict):
         raise ValueError("media_bridge_config_must_be_object")
     config = copy.deepcopy(value)
+    if "enabled" in config and type(config["enabled"]) is not bool:
+        raise ValueError("invalid_enabled")
+    if not config.get("enabled", False):
+        return {"enabled": False}
+    mode = config.get("source_mode", "follow_program")
+    if not isinstance(mode, str) or mode not in {"explicit", "follow_program"}:
+        raise ValueError("invalid_source_mode")
+    for field in ("source_uuid", "source_name"):
+        if field in config and not isinstance(config[field], str):
+            raise ValueError("invalid_source_identity")
+    if mode == "explicit" and not (config.get("source_uuid") or config.get("source_name")):
+        raise ValueError("missing_source_identity")
     for section in ("txt", "json", "timer"):
         if section in config and not isinstance(config[section], dict):
             raise ValueError(f"invalid_{section}_config")
@@ -155,7 +167,8 @@ def _clock(ms: int | None) -> str:
 class MediaBridge:
     """One bounded output worker; ingestion and status never wait for Ontime."""
 
-    def __init__(self, config: dict, dry_run: bool, ontime_get: Callable[[str], Any]):
+    def __init__(self, config: dict, dry_run: bool, ontime_get: Callable[[str], Any],
+                 *, ownership_path: Path | None = None, target_id: str = ""):
         self.config = _validated_config(config)
         if type(dry_run) is not bool:
             raise ValueError("invalid_dry_run")
@@ -167,6 +180,7 @@ class MediaBridge:
         self._closed = threading.Event()
         self._thread: threading.Thread | None = None
         self._session: str | None = None
+        self._session_epoch = -1
         self._retired: set[str] = set()
         self._sequence = -1
         self._snapshot = unavailable("waiting_for_snapshot" if config.get("enabled") else "disabled")
@@ -186,17 +200,39 @@ class MediaBridge:
         self._timer_state: str | None = None
         self._timer_owned = False
         self._secondary_selected = False
+        self._ownership_path = ownership_path
+        self._target_id = target_id
+        self._recovery = None
+        self._recovery_due = 0.0
+        self._recovery_error = "timer_recovery_required"
+        if ownership_path and ownership_path.exists():
+            try:
+                record = json.loads(ownership_path.read_text(encoding="utf-8"))
+                if (not isinstance(record, dict) or type(record.get("index")) is not int or
+                        record["index"] not in {1, 2, 3} or not isinstance(record.get("target"), str)):
+                    raise ValueError("invalid_timer_journal")
+                self._recovery = record
+            except (OSError, ValueError):
+                self._recovery = {"target": None}
 
-    def reset_session(self, session: str) -> dict:
+
+    def reset_session(self, session: str, epoch: int | None = None) -> dict:
         if not isinstance(session, str) or not session or len(session) > 128:
             raise ValueError("invalid_session")
         with self._lock:
+            if epoch is None:
+                epoch = self._session_epoch + 1
+            if not _integer(epoch):
+                raise ValueError("invalid_session_epoch")
+            if epoch < self._session_epoch or (epoch == self._session_epoch and session != self._session):
+                raise ValueError("older_session_epoch")
             if session == self._session:
                 return {"status": "success", "session": session}
             if session in self._retired:
                 raise ValueError("retired_session")
             if self._session:
                 self._retired.add(self._session)
+            self._session_epoch = epoch
             self._session = session
             self._sequence = -1
             self._snapshot = unavailable("waiting_for_snapshot")
@@ -231,6 +267,59 @@ class MediaBridge:
         self._wake.set()
         return {"status": "success"}
 
+    def heartbeat(self, envelope: dict) -> dict:
+        """Renew transport liveness without treating an old snapshot as new data."""
+        with self._lock:
+            self._expire_locked()
+            if (not isinstance(envelope, dict) or not self._session or
+                    envelope.get("session") != self._session or not _integer(envelope.get("sequence"))):
+                raise ValueError("invalid_heartbeat")
+            if not self._snapshot.get("available"):
+                raise ValueError("snapshot_required")
+            if envelope["sequence"] <= self._sequence:
+                return {"status": "ignored", "reason": "older_sequence"}
+            self._sequence = envelope["sequence"]
+            self._received = time.monotonic()
+            if self._output_error:
+                self._processed = -1
+        self._wake.set()
+        return {"status": "success"}
+
+    def _save_ownership(self, index: int) -> None:
+        if self._ownership_path and not self.dry_run:
+            _atomic_write(str(self._ownership_path), json.dumps({"target": self._target_id, "index": index}))
+            directory = os.open(self._ownership_path.parent, os.O_RDONLY)
+            try:
+                os.fsync(directory)
+            finally:
+                os.close(directory)
+
+    def _clear_ownership(self) -> None:
+        if self._ownership_path and not self.dry_run:
+            self._ownership_path.unlink(missing_ok=True)
+
+    def _recover_timer(self) -> None:
+        if not self._recovery:
+            return
+        if time.monotonic() < self._recovery_due:
+            raise ValueError(self._recovery_error)
+        self._recovery_due = time.monotonic() + 2
+        self._recovery_error = "timer_recovery_required"
+        if self.dry_run:
+            raise ValueError(self._recovery_error)
+        if self._recovery.get("target") != self._target_id:
+            self._recovery_error = "timer_recovery_target_changed"
+            raise ValueError(self._recovery_error)
+        poll = self._request("/api/poll")
+        if isinstance(poll, dict) and isinstance(poll.get("payload"), dict):
+            poll = poll["payload"]
+        runtime = poll.get(f"auxtimer{self._recovery['index']}") if isinstance(poll, dict) else None
+        # Ontime 4 has no exclusive owner token; elapsed/duration cannot prove ownership.
+        if not isinstance(runtime, dict) or runtime.get("playback") != "stop":
+            raise ValueError("timer_recovery_required")
+        self._clear_ownership()
+        self._recovery = None
+
     def _expire_locked(self) -> None:
         if self._message_due is not None and time.monotonic() >= self._message_due:
             self._message_due = None
@@ -247,6 +336,9 @@ class MediaBridge:
             state = copy.deepcopy(self._snapshot)
             if not private:
                 state.pop("current_path", None)
+            if self._recovery:
+                state["recovery_timer_index"] = self._recovery.get("index")
+                state["recovery_target_changed"] = self._recovery.get("target") != self._target_id
             if self._last_ontime_action:
                 state["last_ontime_action"] = copy.deepcopy(self._last_ontime_action)
             if self._last_ontime_request:
@@ -255,7 +347,9 @@ class MediaBridge:
             mode = timer.get("media_timer_source", "off")
             state["ontime_output"] = timer.get("ontime_output", "auxiliary_timer")
             state["media_timer_source"] = mode
-            if not self.config.get("enabled"):
+            if self._recovery:
+                state["output_status"] = "error"
+            elif not self.config.get("enabled"):
                 state["output_status"] = "disabled"
             elif mode == "off":
                 state["output_status"] = "off"
@@ -278,6 +372,16 @@ class MediaBridge:
                 state["output_error"] = self._output_error
             return state
 
+    def ontime_unavailable(self) -> None:
+        with self._lock:
+            if not self.config.get("enabled") or self.config.get("timer", {}).get("media_timer_source", "off") == "off":
+                return
+            self._output_error = "ontime_unreachable"
+            self._processed = -1
+            self._last_message = None
+            self._secondary_selected = False
+        self._wake.set()
+
     def current_file(self) -> str:
         state = self.status()
         return self._filename(state)
@@ -290,7 +394,7 @@ class MediaBridge:
         return name.replace("\\", "/").rsplit("/", 1)[-1].replace("\r", " ").replace("\n", " ")
 
     def start(self) -> None:
-        if not self.config.get("enabled") or self._thread:
+        if (not self.config.get("enabled") and not self._recovery) or self._thread:
             return
         self._thread = threading.Thread(target=self._run, name="mps-outputs", daemon=True)
         self._thread.start()
@@ -313,12 +417,14 @@ class MediaBridge:
             with self._lock:
                 self._expire_locked()
                 deadlines = []
+                if self._recovery:
+                    deadlines.append(self._recovery_due)
                 if self._received and self._snapshot.get("available"):
                     deadlines.append(self._received + 6.01)
                 if self._message_due is not None:
                     deadlines.append(self._message_due)
                 timeout = max(0.01, min(deadlines) - time.monotonic()) if deadlines else None
-                pending = self._processed != self._version
+                pending = self._processed != self._version or (self._recovery and time.monotonic() >= self._recovery_due)
             if pending:
                 self.process_outputs()
             if self._closed.is_set():
@@ -335,7 +441,7 @@ class MediaBridge:
                 state = copy.deepcopy(self._snapshot)
                 version = self._version
                 self._working_generation = self._output_generation
-                if self._processed == version:
+                if self._processed == version and not self._recovery:
                     return
             errors = []
             for operation in (self._export, self._sync_timer):
@@ -404,6 +510,7 @@ class MediaBridge:
             self._last_ontime_action = {"status": "dry_run" if self.dry_run else "success", "path": path}
 
     def _sync_timer(self, state: dict) -> None:
+        self._recover_timer()
         timer = self.config.get("timer", {})
         mode = timer.get("media_timer_source", "off")
         if not self.config.get("enabled", False) or mode == "off":
@@ -428,6 +535,7 @@ class MediaBridge:
                     self._action(prefix + "/pause")
                 else:
                     self._action(prefix + "/stop")
+                self._clear_ownership()
                 self._timer_owned = False
                 self._timer_signature = None
                 self._timer_state = None
@@ -446,16 +554,25 @@ class MediaBridge:
                     runtime.get("playback") not in {"start", "play", "pause", "stop"}):
                 raise ValueError("aux_timer_unavailable")
             runtime = {**runtime, "playback": "play" if runtime["playback"] == "start" else runtime["playback"]}
+        if not self._timer_owned and runtime is not None and runtime["playback"] != "stop":
+            raise ValueError("aux_timer_in_use")
         changed = self._timer_signature != signature
         state_change = self._timer_state != state["state"]
         aligned = runtime is None or (abs(runtime["current"] - target) <= 1500 and runtime.get("direction") == "count-down")
         rebase = not self._timer_owned or not aligned or (changed and not state_change)
         if rebase:
+            if not self._timer_owned:
+                self._save_ownership(index)
+            # Stop before changing duration: never rely on running-duration semantics.
+            try:
+                self._action(prefix + "/stop")
+            except InterruptedError:
+                if not self._timer_owned:
+                    self._clear_ownership()
+                raise
             self._timer_owned = True
             self._timer_signature = signature
             self._timer_state = state["state"]
-            # Stop before changing duration: never rely on running-duration semantics.
-            self._action(prefix + "/stop")
             self._action(prefix + "/direction/count-down")
             self._action(prefix + f"/duration/{target}")
             self._action(prefix + "/start")

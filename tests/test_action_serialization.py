@@ -1,4 +1,7 @@
 import json
+import os
+from unittest.mock import patch
+from urllib.request import Request
 import threading
 import time
 import unittest
@@ -47,6 +50,9 @@ class ActionSerializationTests(unittest.TestCase):
         break_sync.sync_to_next_break = slow_enter
         break_sync.sync_from_break = leave
 
+        token_env = patch.dict(os.environ, {"VEN_MEDIA_IPC_TOKEN": "test-automation-token"})
+        token_env.start()
+        self.addCleanup(token_env.stop)
         server = break_sync.create_local_server(config, host="127.0.0.1", port=0)
         server_thread = threading.Thread(target=server.serve_forever, daemon=True)
         server_thread.start()
@@ -55,7 +61,7 @@ class ActionSerializationTests(unittest.TestCase):
         responses = {}
 
         def request(name, path):
-            with urlopen(f"http://{host}:{port}{path}", timeout=5) as response:
+            with urlopen(Request(f"http://{host}:{port}{path}", method="POST", headers={"Authorization": "Bearer test-automation-token"}), timeout=5) as response:
                 responses[name] = json.loads(response.read().decode("utf-8"))
 
         enter_thread = threading.Thread(target=request, args=("enter", "/ontime/break"))

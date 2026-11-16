@@ -1,4 +1,7 @@
 import json
+import os
+from unittest.mock import patch
+from urllib.request import Request
 import threading
 import unittest
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -185,13 +188,16 @@ class LocalHelperServerTests(unittest.TestCase):
                 debounce_seconds=0,
                 request_timeout_seconds=1,
             )
+            token_env = patch.dict(os.environ, {"VEN_MEDIA_IPC_TOKEN": "test-automation-token"})
+            token_env.start()
+            self.addCleanup(token_env.stop)
             server = break_sync.create_local_server(config, host="127.0.0.1", port=0)
             thread = threading.Thread(target=server.serve_forever, daemon=True)
             thread.start()
             try:
                 host, port = server.server_address
                 from urllib.request import urlopen
-                with urlopen(f"http://{host}:{port}/break", timeout=2) as response:
+                with urlopen(Request(f"http://{host}:{port}/break", method="POST", headers={"Authorization": "Bearer test-automation-token"}), timeout=2) as response:
                     payload = json.loads(response.read().decode("utf-8"))
                 self.assertEqual(payload["status"], "dry_run")
                 self.assertEqual(payload["cue"], "BRK_2")
@@ -212,15 +218,18 @@ class LocalHelperServerTests(unittest.TestCase):
                 debounce_seconds=10,
                 request_timeout_seconds=1,
             )
+            token_env = patch.dict(os.environ, {"VEN_MEDIA_IPC_TOKEN": "test-automation-token"})
+            token_env.start()
+            self.addCleanup(token_env.stop)
             server = break_sync.create_local_server(config, host="127.0.0.1", port=0)
             thread = threading.Thread(target=server.serve_forever, daemon=True)
             thread.start()
             try:
                 host, port = server.server_address
                 from urllib.request import urlopen
-                with urlopen(f"http://{host}:{port}/break", timeout=2) as response:
+                with urlopen(Request(f"http://{host}:{port}/break", method="POST", headers={"Authorization": "Bearer test-automation-token"}), timeout=2) as response:
                     first = json.loads(response.read().decode("utf-8"))
-                with urlopen(f"http://{host}:{port}/break", timeout=2) as response:
+                with urlopen(Request(f"http://{host}:{port}/break", method="POST", headers={"Authorization": "Bearer test-automation-token"}), timeout=2) as response:
                     second = json.loads(response.read().decode("utf-8"))
                 self.assertEqual(first["status"], "dry_run")
                 self.assertEqual(second, {"status": "ignored", "reason": "debounce"})
@@ -238,6 +247,9 @@ class LocalHelperServerTests(unittest.TestCase):
                 debounce_seconds=0,
                 request_timeout_seconds=1,
             )
+            token_env = patch.dict(os.environ, {"VEN_MEDIA_IPC_TOKEN": "test-automation-token"})
+            token_env.start()
+            self.addCleanup(token_env.stop)
             server = break_sync.create_local_server(config, host="127.0.0.1", port=0)
             thread = threading.Thread(target=server.serve_forever, daemon=True)
             thread.start()
@@ -290,13 +302,16 @@ class VenObsUtilsStatusTests(unittest.TestCase):
                 debounce_seconds=0,
                 request_timeout_seconds=1,
             )
+            token_env = patch.dict(os.environ, {"VEN_MEDIA_IPC_TOKEN": "test-automation-token"})
+            token_env.start()
+            self.addCleanup(token_env.stop)
             server = break_sync.create_local_server(config, host="127.0.0.1", port=0)
             thread = threading.Thread(target=server.serve_forever, daemon=True)
             thread.start()
             try:
                 host, port = server.server_address
                 from urllib.request import urlopen
-                with urlopen(f"http://{host}:{port}/ontime/break", timeout=2) as response:
+                with urlopen(Request(f"http://{host}:{port}/ontime/break", method="POST", headers={"Authorization": "Bearer test-automation-token"}), timeout=2) as response:
                     trigger = json.loads(response.read().decode("utf-8"))
                 self.assertEqual(trigger["status"], "dry_run")
                 self.assertEqual(trigger["cue"], "BRK_2")

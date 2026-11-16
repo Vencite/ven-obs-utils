@@ -1,4 +1,7 @@
 import json
+import os
+from unittest.mock import patch
+from urllib.request import Request
 import threading
 import unittest
 from urllib.error import HTTPError
@@ -103,13 +106,16 @@ class LeaveBreakEndpointTests(unittest.TestCase):
         with FakeOntimeServer() as fake:
             FakeOntimeHandler.runtime = {"eventNow": rundown["entries"]["e5"]}
             FakeOntimeHandler.rundown = rundown
+            token_env = patch.dict(os.environ, {"VEN_MEDIA_IPC_TOKEN": "test-automation-token"})
+            token_env.start()
+            self.addCleanup(token_env.stop)
             server = break_sync.create_local_server(make_config(fake, dry_run=True), host="127.0.0.1", port=0)
             thread = threading.Thread(target=server.serve_forever, daemon=True)
             thread.start()
             try:
                 host, port = server.server_address
                 try:
-                    with urlopen(f"http://{host}:{port}/ontime/leave-break", timeout=2) as response:
+                    with urlopen(Request(f"http://{host}:{port}/ontime/leave-break", method="POST", headers={"Authorization": "Bearer test-automation-token"}), timeout=2) as response:
                         status_code = response.status
                         payload = json.loads(response.read().decode("utf-8"))
                 except HTTPError as exc:
@@ -128,6 +134,9 @@ class LeaveBreakEndpointTests(unittest.TestCase):
         with FakeOntimeServer() as fake:
             FakeOntimeHandler.runtime = {"eventNow": rundown["entries"]["e5"]}
             FakeOntimeHandler.rundown = rundown
+            token_env = patch.dict(os.environ, {"VEN_MEDIA_IPC_TOKEN": "test-automation-token"})
+            token_env.start()
+            self.addCleanup(token_env.stop)
             server = break_sync.create_local_server(make_config(fake, dry_run=True), host="127.0.0.1", port=0)
             thread = threading.Thread(target=server.serve_forever, daemon=True)
             thread.start()

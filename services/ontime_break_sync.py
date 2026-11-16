@@ -6,6 +6,7 @@ import json
 import logging
 import os
 import hmac
+import hashlib
 import ipaddress
 import signal
 import re
@@ -36,6 +37,7 @@ class Config:
     server_host: str = "127.0.0.1"
     server_port: int = 8765
     media_bridge: dict = field(default_factory=dict)
+    ownership_path: Path | None = None
 
 
 def load_config(path: Path) -> Config:
@@ -71,6 +73,7 @@ def load_config(path: Path) -> Config:
         server_host=server_host,
         server_port=server_port,
         media_bridge=data.get("media_bridge", {}),
+        ownership_path=path.resolve().with_suffix(".timer-owner.json"),
     )
 
 
@@ -274,8 +277,8 @@ def create_local_server(
     media_config = config.media_bridge
     if not isinstance(media_config, dict):
         raise ValueError("media_bridge must be an object")
-    if media_config.get("enabled") is True and host not in {"127.0.0.1", "localhost", "::1"}:
-        raise ValueError("media bridge requires a loopback helper address")
+    if host not in {"127.0.0.1", "localhost"}:
+        raise ValueError("helper requires a loopback address")
     ipc_token = os.environ.get("VEN_MEDIA_IPC_TOKEN", "")
 
     def media_get(path):
@@ -288,7 +291,8 @@ def create_local_server(
                 return json.loads(body)
             return {}
 
-    media = MediaBridge(media_config, config.dry_run, media_get)
+    media = MediaBridge(media_config, config.dry_run, media_get, ownership_path=config.ownership_path,
+                        target_id=hashlib.sha256(config.ontime_base_url.encode()).hexdigest())
     state_lock = threading.Lock()
     action_execution_lock = threading.Lock()
     state: dict[str, Any] = {
@@ -306,7 +310,16 @@ def create_local_server(
                     and hmac.compare_digest(self.headers.get("Authorization", "").encode(), ("Bearer " + token).encode()))
 
         def do_POST(self):
-            if self.path not in {"/media/_session", "/media/_snapshot"}:
+            if self.path in {"/break", "/ontime/break", "/ontime/leave-break"}:
+                if not self._authorized(ipc_token):
+                    self._send_json(403, {"status": "error", "reason": "forbidden"})
+                    return
+                if self.headers.get("Transfer-Encoding"):
+                    self._send_json(400, {"status": "error", "reason": "invalid_body"})
+                    return
+                self._automation()
+                return
+            if self.path not in {"/media/_session", "/media/_snapshot", "/media/_heartbeat"}:
                 self._send_json(404, {"status": "error", "reason": "not_found"})
                 return
             if not self._authorized(ipc_token):
@@ -325,7 +338,9 @@ def create_local_server(
                 if not isinstance(body, dict):
                     raise ValueError("invalid_body")
                 if self.path == "/media/_session":
-                    result = media.reset_session(body.get("session"))
+                    result = media.reset_session(body.get("session"), body.get("epoch", 0))
+                elif self.path == "/media/_heartbeat":
+                    result = media.heartbeat(body)
                 elif self.path == "/media/_snapshot":
                     result = media.ingest(body)
                 else:
@@ -378,6 +393,7 @@ def create_local_server(
                     )
                 except Exception as exc:
                     LOG.error("Status check failed: %s", exc)
+                    media.ontime_unavailable()
                     with state_lock:
                         last_action = state["last_action"]
                     self._send_json(
@@ -395,6 +411,12 @@ def create_local_server(
                     )
                 return
 
+            if self.path in {"/break", "/ontime/break", "/ontime/leave-break"}:
+                self._send_json(405, {"status": "error", "reason": "use_authenticated_post"})
+            else:
+                self._send_json(404, {"status": "error", "reason": "not_found"})
+
+        def _automation(self):
             action_key: str
             action_label: str
             action: Callable[[Config], dict[str, Any]]

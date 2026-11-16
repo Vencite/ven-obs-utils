@@ -119,6 +119,12 @@ jobs:
             app/Tests/MPSStateTests.swift \
             -o /tmp/mps-state-tests
           /tmp/mps-state-tests
+      - name: Run media heartbeat and reconnect regressions
+        run: |
+          xcrun --sdk macosx swiftc -parse-as-library \
+            app/Sources/MPSState.swift app/Sources/MediaBridgeController.swift \
+            app/Tests/MediaBridgeControllerTests.swift -o /tmp/media-bridge-controller-tests
+          /tmp/media-bridge-controller-tests
       - name: Verify settings visibility and capture previews
         run: |
           xcrun --sdk macosx swiftc -parse-as-library -framework AppKit \

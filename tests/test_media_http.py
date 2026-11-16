@@ -148,6 +148,28 @@ class MediaHTTPTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             helper.create_local_server(helper.Config(ontime_base_url="http://unused.invalid", media_bridge={"enabled": True}), host="0.0.0.0", port=0)
 
+    def test_automation_requires_post_and_private_token(self):
+        import ontime_break_sync as helper
+        with patch.object(helper, "sync_to_next_break", return_value={"status": "dry_run"}) as enter, \
+             patch.object(helper, "sync_from_break", return_value={"status": "dry_run"}) as leave:
+            for path in ("/break", "/ontime/break", "/ontime/leave-break"):
+                self.assertEqual(self.call(path, token="private-token")[0], 405)
+                for token in (None, "wrong", "control-token"):
+                    self.assertEqual(self.call(path, {}, token)[0], 403)
+                self.assertEqual(enter.call_count + leave.call_count, 0)
+            self.assertEqual(self.call("/ontime/break", {}, "private-token")[0], 200)
+            self.assertEqual(self.call("/ontime/leave-break", {}, "private-token")[0], 200)
+            self.assertEqual((enter.call_count, leave.call_count), (1, 1))
+
+
+
+    def test_late_old_session_cannot_retire_new_configuration(self):
+        self.assertEqual(self.call("/media/_session", {"session": "new", "epoch": 2}, "private-token")[0], 200)
+        self.assertEqual(self.call("/media/_session", {"session": "old", "epoch": 1}, "private-token")[0], 400)
+        self.assertEqual(self.call("/media/_snapshot", {"session": "new", "sequence": 1, "snapshot": self.snapshot()}, "private-token")[0], 200)
+        self.assertEqual(self.call("/media/_heartbeat", {"session": "old", "sequence": 2}, "private-token")[0], 400)
+        self.assertEqual(self.call("/media/_heartbeat", {"session": "new", "sequence": 2}, "private-token")[0], 200)
+
 
 if __name__ == "__main__":
     unittest.main()
