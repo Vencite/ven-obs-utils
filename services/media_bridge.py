@@ -531,10 +531,13 @@ class MediaBridge:
         prefix = f"/api/auxtimer/{index}"
         if not valid:
             if self._timer_owned:
-                if timer.get("inactive_policy", "stop") == "keep_last":
-                    self._action(prefix + "/pause")
-                else:
-                    self._action(prefix + "/stop")
+                # A temporary hold retains ownership; process shutdown must release the slot.
+                if timer.get("inactive_policy", "stop") == "keep_last" and not self._closed.is_set():
+                    if self._timer_state is not None:
+                        self._action(prefix + "/pause")
+                        self._timer_state = None
+                    return
+                self._action(prefix + "/stop")
                 self._clear_ownership()
                 self._timer_owned = False
                 self._timer_signature = None
@@ -578,7 +581,7 @@ class MediaBridge:
             self._action(prefix + "/start")
             if desired == "pause":
                 self._action(prefix + "/pause")
-        elif state_change or (runtime is not None and runtime["playback"] != desired):
+        elif (runtime is None and state_change) or (runtime is not None and runtime["playback"] != desired):
             self._action(prefix + ("/pause" if desired == "pause" else "/start"))
         if timer.get("change_stage_timer_secondary_source", False) and not self._secondary_selected:
             self._action(f"/api/message/timer?secondarySource=aux{index}")

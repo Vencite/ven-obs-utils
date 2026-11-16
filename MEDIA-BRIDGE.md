@@ -73,9 +73,17 @@ expires after six seconds. Recovery requires authoritative OBS data.
 
 Before the first auxiliary mutation, the helper atomically writes and fsyncs
 `config.timer-owner.json` next to `config.json`. It contains the selected slot
-and a hash of the Ontime target, without credentials. Successful normal cleanup
-removes it; a failed cleanup leaves it for the next process. This also applies
-when media outputs are subsequently disabled or the selected slot changes.
+and a hash of the Ontime target, without credentials. During telemetry loss,
+`keep_last` pauses the owned timer and retains both ownership and the journal.
+Repeated unavailable snapshots do not send additional pause commands. Fresh MPS
+data resumes or synchronizes that same slot; `stop` stops it and releases ownership.
+
+Normal helper shutdown (including Save & Reconnect) stops its owned auxiliary
+timer even with `keep_last`, then releases ownership and removes the journal.
+This lets the new helper/configuration start without an abandoned paused slot.
+A failed stop retains the journal. SIGKILL skips this cleanup, so the next helper
+uses the cautious recovery below, including when media outputs are disabled or
+the selected slot/URL changes.
 
 **Ontime 4.14 has no exclusive timer owner identifier or conditional mutation.**
 A timer's duration/current value cannot establish who owns it after a crash.
@@ -108,7 +116,8 @@ Additional manual regression checks (on a test rundown):
 2. During pause, disconnect OBS, reconnect, and choose a different MPS source.
    Old data must become unavailable and must not overwrite the new source.
 3. Restart the helper normally, then separately SIGKILL it during countdown.
-   Normal shutdown follows the configured inactive policy. Crash recovery must
+   During telemetry loss keep_last pauses; normal shutdown stops the owned slot.
+   Crash recovery must
    show the recorded slot and require the explicit decision above; another
    integration's active slot must remain untouched. Repeat with slot/URL changes.
 4. Disconnect/restart Ontime and the helper. Menu and Settings must show current
