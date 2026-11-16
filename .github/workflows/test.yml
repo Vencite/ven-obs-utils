@@ -25,14 +25,15 @@ jobs:
         run: ./build_app.sh
       - name: Package develop test build
         if: github.ref == 'refs/heads/develop'
-        run: |
-          ditto -c -k --sequesterRsrc --keepParent \
-            "build/VEN OBS Utils.app" \
-            "build/VEN-OBS-Utils-develop.zip"
+        run: ./package_app.sh develop
       - name: Upload develop test build
         if: github.ref == 'refs/heads/develop'
         uses: actions/upload-artifact@v4
         with:
           name: VEN-OBS-Utils-develop-${{ github.sha }}
-          path: build/VEN-OBS-Utils-develop.zip
+          path: |
+            build/dist/*.zip
+            build/dist/*.dmg
+            build/dist/BUILD-INFO.json
+            build/dist/SHA256SUMS
           if-no-files-found: error

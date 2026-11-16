@@ -143,3 +143,19 @@ MIT. See [LICENSE](LICENSE). Issues and sensible PRs are welcome.
 
 For live production, video, photography or 3D work:
 [VEN.WORKS — English](https://ven.works/en/) · [Polish](https://ven.works/).
+
+
+## Test candidates
+
+RC tags such as `v0.2.1-rc.1` are explicitly marked GitHub **Pre-release** and
+never Latest. Publication requires successful develop CI for the exact tagged
+commit, then repeats the full suite before building/verifying DMG and ZIP.
+Existing releases/assets are never overwritten. `.github/RELEASE_VERSION`
+remains the stable version marker; an RC does not require changing it or merging
+to main. Develop CI also uploads verified DMG/ZIP installers as a fallback.
+
+Builds now compile arm64 and x86_64 slices explicitly for macOS 13 and combine
+them; packaging verifies the actual architectures, minimum targets, ad-hoc
+signature and commit metadata. These apps are not notarized. Before an RC launch,
+quit other copies, back up Application Support/VEN OBS Utils and enable Dry Run
+in its existing configuration. See the RC release notes and [RC audit](RC-AUDIT.md).

@@ -20,13 +20,19 @@ class BuildPipelineTests(unittest.TestCase):
         self.bin.mkdir()
         self.log = self.root / "commands.log"
         self.env = {**os.environ, "PATH": str(self.bin) + os.pathsep + os.environ["PATH"], "COMMAND_LOG": str(self.log)}
-        for key in ("VERSION", "DEVELOP_SHA", "GITHUB_RUN_NUMBER", "FAIL_TEST"):
+        for key in ("VERSION", "DEVELOP_SHA", "BUILD_COMMIT", "GITHUB_RUN_NUMBER", "FAIL_TEST"):
             self.env.pop(key, None)
         self.stub("git", 'exit 1\n')  # no repository in the isolated build fixture
         self.stub("codesign", 'exit 0\n')
         self.stub("xcrun", '''
 if [[ "$*" == *--show-sdk-path* ]]; then echo /fake-sdk; exit 0; fi
 printf '%s\\n' "$*" >> "$COMMAND_LOG"
+if [[ "$1" == lipo ]]; then
+  while [[ "$1" != -output ]]; do shift; done
+  shift
+  touch "$1"
+  exit 0
+fi
 while [[ "$#" -gt 0 ]]; do
   if [[ "$1" == -o ]]; then
     shift
@@ -115,3 +121,37 @@ exit 1
         result = subprocess.run(["bash", str(self.root / "test.sh")], env=self.env, capture_output=True)
         self.assertEqual(result.returncode, 7)
         self.assertFalse(self.log.exists(), "No Swift compilation may follow a failed Python suite")
+
+    def test_universal_build_uses_explicit_macos13_targets_and_embeds_rc_commit(self):
+        sha = "1234567890abcdef" * 2 + "12345678"
+        info = self.build(VERSION="0.2.1-rc.1", BUILD_COMMIT=sha)
+        self.assertEqual(info["VENBuildCommit"], sha)
+        self.assertEqual(info["CFBundleShortVersionString"], "0.2.1")
+        log = self.log.read_text()
+        self.assertIn("-target arm64-apple-macosx13.0", log)
+        self.assertIn("-target x86_64-apple-macosx13.0", log)
+        self.assertIn("lipo -create", log)
+
+    def test_rc_tag_resolution_is_explicit_and_invalid_suffix_fails_closed(self):
+        import textwrap
+        workflow = (ROOT / '.github/workflows/release.yml').read_text()
+        block = workflow.split('      - name: Resolve release version', 1)[1].split('      - name:', 1)[0]
+        script = textwrap.dedent(block.split('        run: |\n', 1)[1])
+        output = self.root / 'outputs'
+        for tag, flag in [('v0.2.1-rc.1', 'true'), ('v0.2.1', 'false')]:
+            output.write_text('')
+            result = subprocess.run(['bash', '-c', script], cwd=ROOT, env={**self.env,
+                'GITHUB_REF_TYPE':'tag', 'GITHUB_REF_NAME':tag, 'GITHUB_OUTPUT':str(output)}, capture_output=True)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertIn('prerelease=' + flag, output.read_text())
+        result = subprocess.run(['bash', '-c', script], cwd=ROOT, env={**self.env,
+            'GITHUB_REF_TYPE':'tag', 'GITHUB_REF_NAME':'v0.2.1-unknown.1', 'GITHUB_OUTPUT':str(output)}, capture_output=True)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('FLAGS+=(--prerelease --latest=false --notes-file', workflow)
+        self.assertIn('--verify-tag', workflow)
+        self.assertNotIn('--clobber', workflow)
+
+    def test_packaging_rejects_unsafe_label_before_tools(self):
+        result = subprocess.run(['bash', str(ROOT / 'package_app.sh'), '../invalid'], env=self.env, capture_output=True)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertFalse(self.log.exists())

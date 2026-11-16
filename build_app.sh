@@ -26,6 +26,11 @@ if [[ -n "$DEVELOP_SHA" ]]; then
   fi
   BUILD_LABEL="$VERSION (develop ${DEVELOP_SHA:0:12})"
 fi
+BUILD_COMMIT="${BUILD_COMMIT:-${DEVELOP_SHA:-$(git -C "$ROOT" rev-parse HEAD 2>/dev/null || true)}}"
+if [[ -n "$BUILD_COMMIT" && ! "$BUILD_COMMIT" =~ ^[0-9a-f]{40}$ ]]; then
+  echo "ERROR: BUILD_COMMIT must be a full Git commit SHA" >&2
+  exit 1
+fi
 BUILD_DIR="$ROOT/build"
 APP="$BUILD_DIR/$APP_NAME.app"
 CONTENTS="$APP/Contents"
@@ -41,15 +46,20 @@ mkdir -p "$CONTENTS/MacOS" "$CONTENTS/Resources/services"
 
 SWIFT_SOURCES=("$ROOT"/app/Sources/*.swift)
 
-xcrun --sdk macosx swiftc \
-  -O \
-  -sdk "$SDK_PATH" \
-  -framework AppKit \
-  -framework Foundation \
-  -framework Security \
-  -framework CryptoKit \
-  "${SWIFT_SOURCES[@]}" \
-  -o "$CONTENTS/MacOS/$EXECUTABLE"
+for BUILD_ARCH in arm64 x86_64; do
+  xcrun --sdk macosx swiftc \
+    -O \
+    -target "$BUILD_ARCH-apple-macosx13.0" \
+    -sdk "$SDK_PATH" \
+    -framework AppKit \
+    -framework Foundation \
+    -framework Security \
+    -framework CryptoKit \
+    "${SWIFT_SOURCES[@]}" \
+    -o "$BUILD_DIR/$EXECUTABLE-$BUILD_ARCH"
+done
+xcrun lipo -create "$BUILD_DIR/$EXECUTABLE-arm64" "$BUILD_DIR/$EXECUTABLE-x86_64" \
+  -output "$CONTENTS/MacOS/$EXECUTABLE"
 
 cp "$ROOT"/services/*.py "$CONTENTS/Resources/services/"
 cp "$ROOT/config/config.example.json" "$CONTENTS/Resources/default-config.json"
@@ -69,6 +79,7 @@ cat > "$CONTENTS/Info.plist" <<EOF
   <key>CFBundleShortVersionString</key><string>$SHORT_VERSION</string>
   <key>CFBundleGetInfoString</key><string>$BUILD_LABEL</string>
   <key>VENDevelopCommit</key><string>$DEVELOP_SHA</string>
+  <key>VENBuildCommit</key><string>$BUILD_COMMIT</string>
   <key>CFBundleVersion</key><string>1</string>
   <key>LSMinimumSystemVersion</key><string>13.0</string>
   <key>LSUIElement</key><true/>

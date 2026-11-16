@@ -49,7 +49,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         let version = Bundle.main.infoDictionary?["CFBundleGetInfoString"] as? String
             ?? Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "?"
-        let commit = Bundle.main.infoDictionary?["VENDevelopCommit"] as? String ?? ""
+        let commit = Bundle.main.infoDictionary?["VENBuildCommit"] as? String
+            ?? Bundle.main.infoDictionary?["VENDevelopCommit"] as? String ?? ""
         appendLog("startup version=\(version) commit=\(commit)")
         NSApp.setActivationPolicy(.accessory)
         setupMenu()
