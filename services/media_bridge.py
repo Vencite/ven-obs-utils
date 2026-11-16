@@ -719,10 +719,12 @@ class MediaBridge:
             runtime = {**runtime, "playback": "play" if runtime["playback"] == "start" else runtime["playback"]}
         if not runtime_state["owned"] and runtime is not None and runtime["playback"] != "stop":
             raise ValueError("aux_timer_in_use")
-        changed = runtime_state["signature"] != signature
+        previous = runtime_state["signature"]
+        changed = previous != signature
+        identity_changed = previous is not None and previous[:3] != signature[:3]
         state_change = runtime_state["state"] != state["state"]
         aligned = runtime is None or (abs(runtime["current"] - target) <= 1500 and runtime.get("direction") == "count-down")
-        rebase = not runtime_state["owned"] or not aligned or (changed and not state_change)
+        rebase = not runtime_state["owned"] or not aligned or identity_changed or (changed and not state_change)
         if rebase:
             if not runtime_state["owned"]:
                 self._save_ownership(index)

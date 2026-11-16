@@ -95,7 +95,7 @@ Nie automatyzujemy zatrzymywania aktywnych orphanów ani przełączania rundownu
 | app/Sources/AppConfig.swift | Addytywna walidacja, odczyt legacy i backup zapisu listy. |
 | app/Sources/SettingsWindowController.swift | Wiersze timerów, niezależna wiadomość i jeden Stage source. |
 | app/Sources/StatusPresentation.swift, ApplicationMain.swift | Statusy per slot i przekazanie ich do Settings. |
-| tests/test_multi_timers.py | 19 scenariuszy wielokrotnych wyjść i awarii. |
+| tests/test_multi_timers.py | 20 scenariuszy wielokrotnych wyjść i awarii. |
 | tests/fixtures/media_timer_configs.json | 13 wspólnych przypadków walidacji Swift/Python. |
 | tests/test_keep_last.py | Te same asercje własności odwołują się teraz do stanu slotu 1. |
 | app/Tests/AppConfigMigrationTests.swift | Wspólne fixtures, legacy/multi/backup/duplikaty/disabled. |
@@ -113,7 +113,7 @@ w obowiązkowym wspólnym test.sh; testów nie usunięto ani nie osłabiono.
 - Pierwsze 10 nowych multi-testów nie przechodziło przed implementacją.
 - Nowy test close/ingest odtworzył konkretną akceptację snapshotu podczas cleanup;
   po poprawce odrzuca oba spóźnione ingesty i potwierdza stop obu slotów.
-- Lokalnie 114/114 Python OK (16.101 s), w tym 19 multi-scenariuszy. Atrapy
+- Lokalnie 115/115 Python OK (15.018 s), w tym 20 multi-scenariuszy. Atrapy
   Ontime/loopback oraz kontrolowany zegar 300 s; bez prawdziwych mutacji.
 - py_compile services/tests, bash -n test.sh/build_app.sh, git diff --check: OK.
 - [Pierwsze CI implementacji](https://github.com/Vencite/ven-obs-utils/actions/runs/43865701969):
@@ -135,3 +135,22 @@ release oraz zmiany 0.2.0. Zielone CI nie zastępuje ręcznych prób OBS/MPS/Ont
 Przed live trzeba wykonać opisane w MEDIA-BRIDGE.md scenariusze Aux1+Aux2,
 next/seek/speed/Shuffle/Loop, długa pauza, unknown/URL, niezależne błędy,
 keep_last/stop, close/SIGKILL/recovery, reconnect, Dry Run i regresję przerw.
+
+
+## Końcowe domknięcie przypadków brzegowych
+
+[CI aef1b9e](https://github.com/Vencite/ven-obs-utils/actions/runs/43867471691)
+przeszło: 114 Python OK (50.464 s), wszystkie 15 Swift PASS, AppKit, pełny build
+macOS i upload ZIP. Zrzuty natywnego UI obejrzano także po skróceniu etykiety Stage
+Timer; wybory i statusy obu slotów oraz wiadomość są czytelne.
+
+Ostatni test odtworzył nowy film połączony z pauzą: runtime mógł mieć zgodny
+remaining, ale niepoprawną duration poprzedniego filmu (3000 zamiast 1000).
+Zmiana source UUID/current item/speed wymusza teraz rebase również przy zmianie
+stanu playback. Zwykła pauza/resume tego samego filmu nadal nie resetuje duration;
+regresje stabilnego postępu i pauzy pozostają. Po poprawce lokalnie 115/115 OK.
+Ostatni commit ma własny pełny run Tests oraz artefakt, dostępne w linku do CI
+develop powyżej; finalny HEAD/run/artefakt podano w odpowiedzi użytkownikowi.
+
+Commit raportu sprzed ostatniej regresji:
+`aef1b9e1a75e3d27a1ffef5b460abd1844f5b593`.

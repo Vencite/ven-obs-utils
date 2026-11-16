@@ -320,3 +320,13 @@ class MultiTimerTests(unittest.TestCase):
         self.assertEqual(accepted, [False, False], 'Closing bridge must reject in-flight ingestion')
         self.assertEqual([self.fake.slots[i].timer['playback'] for i in (1, 2)], ['stop', 'stop'])
         self.assertFalse(self.path.exists())
+
+    def test_new_item_during_pause_rebases_current_file_even_when_remaining_aligned(self):
+        self.send()
+        self.fake.slots[1].timer['current'] = 1000
+        self.fake.calls.clear()
+        self.send(snapshot(state='paused', current_item_id='new-short-clip', remaining_ms=1000,
+                           duration_media_ms=1000, elapsed_media_ms=0, snapshot_revision=2))
+        self.assertEqual(self.fake.slots[1].timer['duration'], 1000, 'New file must reset duration even during a state change')
+        self.assertEqual(self.fake.slots[1].timer['playback'], 'pause')
+        self.assertIn('/api/auxtimer/1/duration/1000', self.fake.calls)
